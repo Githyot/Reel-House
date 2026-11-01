@@ -17,10 +17,10 @@ use crate::http::{Http, Request, Response};
 use crate::json::Json;
 use std::path::{Path, PathBuf};
 
-pub const REPO: &str = "Githyot/ReelHouse";
+pub const REPO: &str = "Githyot/Reel-House";
 pub const API: &str = "https://api.github.com";
 /// The page of the releases, for platforms that cannot install by themselves.
-pub const RELEASES_PAGE: &str = "https://github.com/Githyot/ReelHouse/releases";
+pub const RELEASES_PAGE: &str = "https://github.com/Githyot/Reel-House/releases";
 
 /// The version of this build: the release tag it was built for (REELHOUSE_RELEASE, set by the workflows), else the
 /// version of Cargo.toml.
@@ -233,8 +233,8 @@ impl Found {
     }
 }
 
-pub const PRIVATE: &str = "The releases could not be read: the repository is private. Connect a GitHub token in Preferences > Backup > Online copy (GitHub) that can read Githyot/ReelHouse (fine-grained: \"Contents: read\" on that repository, or a classic token with \"repo\").";
-pub const PRIVATE_TOKEN: &str = "The GitHub token of the online backup cannot read Githyot/ReelHouse. Give it \"Contents: read\" on that repository (or use a classic token with \"repo\").";
+pub const PRIVATE: &str = "The releases could not be read: the repository is private. Connect a GitHub token in Preferences > Backup > Online copy (GitHub) that can read Githyot/Reel-House (fine-grained: \"Contents: read\" on that repository, or a classic token with \"repo\").";
+pub const PRIVATE_TOKEN: &str = "The GitHub token of the online backup cannot read Githyot/Reel-House. Give it \"Contents: read\" on that repository (or use a classic token with \"repo\").";
 
 fn failure(r: &Response) -> String {
     let msg = Json::parse(&r.text()).map(|j| j.get("message").str()).unwrap_or_default();
@@ -476,7 +476,7 @@ mod tests {
     const LIST: &str = r#"[
         {"tag_name":"v0.9.0-beta.1","prerelease":true,"draft":false,"assets":[]},
         {"tag_name":"v1.0.0","prerelease":false,"draft":true,"assets":[]},
-        {"tag_name":"v0.5.0","name":"Reelhouse 0.5.0","body":"New things","html_url":"https://github.com/Githyot/ReelHouse/releases/tag/v0.5.0","prerelease":false,"draft":false,
+        {"tag_name":"v0.5.0","name":"Reelhouse 0.5.0","body":"New things","html_url":"https://github.com/Githyot/Reel-House/releases/tag/v0.5.0","prerelease":false,"draft":false,
          "assets":[{"id":11,"name":"ReelHouse-windows.zip","size":5},{"id":12,"name":"ReelHouse-linux-x86_64.deb","size":3},{"id":13,"name":"ReelHouse-linux-x86_64.rpm","size":3},
                    {"id":14,"name":"ReelHouse-macos.dmg","size":3},{"id":15,"name":"ReelHouse-android-arm64-v8a.apk","size":3},{"id":16,"name":"ReelHouse-ios-unsigned.ipa","size":3}]},
         {"tag_name":"v0.4.2","prerelease":false,"draft":false,"assets":[]}
@@ -521,7 +521,7 @@ mod tests {
 
     #[test]
     fn check_with_a_token() {
-        let f = Fake::new().route("GET https://api.github.com/repos/Githyot/ReelHouse/releases", 200, LIST);
+        let f = Fake::new().route("GET https://api.github.com/repos/Githyot/Reel-House/releases", 200, LIST);
         let found = check(&f, " tok ").unwrap();
         assert!(found.with_token);
         assert_eq!(found.update("0.4.2").unwrap().tag, "v0.5.0");
@@ -533,7 +533,7 @@ mod tests {
 
     #[test]
     fn check_without_a_token_is_anonymous() {
-        let f = Fake::new().route("GET https://api.github.com/repos/Githyot/ReelHouse/releases", 200, LIST);
+        let f = Fake::new().route("GET https://api.github.com/repos/Githyot/Reel-House/releases", 200, LIST);
         let found = check(&f, "").unwrap();
         assert!(!found.with_token);
         assert!(f.requests()[0].headers.iter().all(|(k, _)| k != "Authorization"));
@@ -563,8 +563,8 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("rh-upd-{}", std::process::id()));
         let dest = dir.join("a.zip");
         let f = Fake::new()
-            .route("GET https://api.github.com/repos/Githyot/ReelHouse/releases/assets/11", 206, "abc")
-            .route("GET https://api.github.com/repos/Githyot/ReelHouse/releases/assets/11", 206, "de");
+            .route("GET https://api.github.com/repos/Githyot/Reel-House/releases/assets/11", 206, "abc")
+            .route("GET https://api.github.com/repos/Githyot/Reel-House/releases/assets/11", 206, "de");
         let asset = Asset { id: 11, name: "ReelHouse-windows.zip".into(), size: 5 };
         let seen = std::sync::Mutex::new(vec![]);
         download_in(&f, "tok", &asset, &dest, &|d, t| seen.lock().unwrap().push((d, t)), &|| true, 3).unwrap();
