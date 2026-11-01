@@ -86,10 +86,7 @@ fn main() {
         }
     }
     let Some((first, magnet, listed)) = chosen else { return };
-    for (i, f) in listed.iter().enumerate().filter(|(_, f)| f.0.contains("Season 06")).take(5) {
-        println!("  file {}: {} ({:.0} MB)", i, f.0, f.1 as f64 / 1e6);
-    }
-    let idx = listed.iter().position(|f| f.0.contains("Season 06") && (f.0.contains(" 003") || f.0.contains("E03"))).or_else(|| torrent::pick_episode(&listed, first.file_idx, season, episode)).unwrap_or(0);
+    let idx = std::env::var("PROBE_FILE").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(0);
     println!("== play {} [{}] file {} ({:.2} GB)", first.info_hash.clone().unwrap_or_default(), first.desc.lines().next().unwrap_or(""), listed[idx].0, listed[idx].1 as f64 / 1e9);
     let (tid, _, _) = match rq.add_only(&magnet, &[idx]) {
         Ok(x) => x,

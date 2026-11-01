@@ -7,6 +7,10 @@ on:
 jobs:
   probe:
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [stock, patched]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -15,5 +19,6 @@ jobs:
       - name: Probe
         run: |
           sudo ln -sf /usr/lib/x86_64-linux-gnu/libmpv.so.2 /usr/lib/x86_64-linux-gnu/libmpv.so || true
+          if [ "${{ matrix.engine }}" = patched ]; then printf '\n[patch.crates-io]\nlibrqbit = { path = "third_party/librqbit" }\n' >> Cargo.toml; fi
           cargo build --release --example torrent_probe --features torrent-embed 2>&1 | tail -n 3
-          PROBE_HASH=520cf21103a92b48fbf5b1282e8be40d6faa9d1c ./target/release/examples/torrent_probe tt0168366 6 3 2>&1 | cut -c1-300
+          PROBE_FILE=336 PROBE_HASH=520cf21103a92b48fbf5b1282e8be40d6faa9d1c ./target/release/examples/torrent_probe tt0168366 6 3 2>&1 | cut -c1-300
