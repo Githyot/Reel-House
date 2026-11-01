@@ -72,3 +72,7 @@ incremental = false
 [profile.release.package."*"]
 opt-level = 2
 codegen-units = 4
+
+# The torrent engine with one streaming fix (see third_party/librqbit/REELHOUSE.md).
+[patch.crates-io]
+librqbit = { path = "third_party/librqbit" }
