@@ -1,0 +1,52 @@
+[package]
+name = "reelhouse-qtbridge"
+version = "0.1.0"
+edition = "2021"
+description = "C interface between the Reelhouse core (Rust) and the Qt interface (C++/QML)"
+
+[lib]
+name = "reelhouse_qtbridge"
+crate-type = ["staticlib"]
+
+[features]
+default = ["desktop"]
+# Desktop (Windows, Linux, macOS): helper programs may be started, game controllers through gilrs.
+desktop = ["reelhouse/desktop"]
+# Android and iOS (cargo-ndk / `--target aarch64-apple-ios`): no helper programs, no controllers through gilrs
+# (Qt reads them). Build with `--no-default-features --features mobile`.
+mobile = ["reelhouse/mobile"]
+# QuickJS bindings made with libclang on the build machine (needed for Android; macOS and iOS ship with them).
+js-bindgen = ["reelhouse/js-bindgen"]
+# the torrent engine inside the app (Android): `--features "mobile,js-bindgen,torrent-embed"`
+torrent-embed = ["reelhouse/torrent-embed"]
+
+[dependencies]
+image-webp = "0.2"
+reelhouse = { path = "..", default-features = false, features = ["app", "js", "webp"] }
+
+# No LTO: thin LTO of the static library (core + embedded libmpv / rqbit bytes) ran rustc-LLVM out of memory.
+[profile.release]
+opt-level = 3
+lto = false
+codegen-units = 2
+strip = true
+debug = false
+incremental = false
+panic = "unwind"
+
+[profile.release.package."*"]
+opt-level = 2
+codegen-units = 4
+
+# Game controllers (gilrs). Windows and macOS only: on Linux gilrs needs the libudev headers, and on Android and iOS
+# the controllers come through Qt (key events of the D-pad and the buttons).
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
+gilrs = "0.11"
+
+# PlayStation controllers over HID (src/ds4.rs: touchpad as a mouse, light bar, vibration, battery). Windows uses the
+# pure-Rust backend; macOS the C hidapi built by the crate.
+[target.'cfg(windows)'.dependencies]
+hidapi = { version = "2.6", default-features = false, features = ["windows-native"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+hidapi = { version = "2.6", default-features = false }

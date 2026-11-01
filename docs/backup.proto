@@ -1,0 +1,17 @@
+// Layout of the FIRST Reelhouse backups (.proto.gz): this message, protobuf-encoded, then gzip-compressed.
+// Still read on restore. New backups (format 2) are `reelhouse-backup-YYYYMMDD-HHMM.rhb`: a plain ZIP holding
+// manifest.json (app, format, created, app_version, os, study_media, files, bytes, sections[]) and data/<path>
+// for every file of the data folder that is kept (see src/backup.rs).
+syntax = "proto3";
+
+message Backup {
+  uint32 format = 1;   // 1
+  string app = 2;      // "reelhouse"
+  uint64 created = 3;  // Unix time
+  repeated File files = 4;
+}
+
+message File {
+  string path = 1;     // relative to the data folder, e.g. "settings.json", "imgcache/ab12cd34"
+  bytes data = 2;
+}

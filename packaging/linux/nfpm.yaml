@@ -1,0 +1,75 @@
+# nfpm (https://nfpm.goreleaser.com) packs the Linux build as a .deb and a .rpm; .github/workflows/linux.yml runs
+#   RH_VERSION=0.5.1 nfpm package -f packaging/linux/nfpm.yaml -p deb|rpm
+# from the repository root, after linuxdeploy has filled AppDir/usr with the program, Qt, its plugins and QML modules.
+# Everything goes to /opt/reelhouse (Qt is bundled: Ubuntu 22.04/24.04 and Debian 12 ship Qt older than the 6.6 the app
+# needs); /usr/bin/reelhouse starts it. Video plays through the system's libmpv, a dependency of the package.
+name: reelhouse
+arch: amd64
+platform: linux
+version: ${RH_VERSION}
+release: 1
+section: video
+priority: optional
+maintainer: Githyot <117548028+Githyot@users.noreply.github.com>
+vendor: ReelHouse
+homepage: https://github.com/Githyot/ReelHouse
+license: GPL-3.0-or-later
+description: |-
+  ReelHouse media center.
+  Video player built on mpv (Stremio addons, Real-Debrid, Anime4K, translated subtitles),
+  manga and novel readers, and language study (cards and lessons).
+
+contents:
+  - src: ./AppDir/usr/
+    dst: /opt/reelhouse/
+    type: tree
+  - src: /opt/reelhouse/bin/reelhouse-qt
+    dst: /usr/bin/reelhouse
+    type: symlink
+  - src: ./packaging/linux/reelhouse.desktop
+    dst: /usr/share/applications/reelhouse.desktop
+  - src: ./qt/icon/themes/reelhouse-gnome-256.png
+    dst: /usr/share/icons/hicolor/256x256/apps/reelhouse.png
+  - src: ./qt/icon/themes/reelhouse-gnome-512.png
+    dst: /usr/share/icons/hicolor/512x512/apps/reelhouse.png
+  - src: ./qt/icon/themes/reelhouse-gnome.svg
+    dst: /usr/share/icons/hicolor/scalable/apps/reelhouse.svg
+  - src: ./LICENSE
+    dst: /usr/share/doc/reelhouse/LICENSE
+
+# What the bundled Qt and the player take from the system (linuxdeploy leaves these out of AppDir on purpose; Qt's own
+# libraries, GLib, D-Bus, PulseAudio and the xcb helpers are bundled).
+overrides:
+  deb:
+    depends:
+      - libmpv2 | libmpv1
+      - libgl1
+      - libegl1
+      - libopengl0
+      - libdrm2
+      - libfontconfig1
+      - libfreetype6
+      - libx11-6
+      - libx11-xcb1
+      - libxcb1
+      - libexpat1
+      - zlib1g
+    recommends:
+      # the offline voice of Study (Qt's speech-dispatcher backend)
+      - libspeechd2
+  rpm:
+    depends:
+      - libmpv.so.2()(64bit)
+      - libGL.so.1()(64bit)
+      - libEGL.so.1()(64bit)
+      - libOpenGL.so.0()(64bit)
+      - libdrm.so.2()(64bit)
+      - libfontconfig.so.1()(64bit)
+      - libfreetype.so.6()(64bit)
+      - libX11.so.6()(64bit)
+      - libX11-xcb.so.1()(64bit)
+      - libxcb.so.1()(64bit)
+      - libexpat.so.1()(64bit)
+      - libz.so.1()(64bit)
+    recommends:
+      - libspeechd.so.2()(64bit)

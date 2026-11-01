@@ -1,0 +1,133 @@
+# Builds the Android app (arm64-v8a APK for phones and x86_64 for emulators/Waydroid, debug-signed) the way build-android.sh does: the Rust core with cargo-ndk,
+# then Qt for Android and androiddeployqt. Runs by hand (Actions > Build Android > Run workflow), on version tags
+# (v0.4.0, ...); never on pull requests. A tag attaches the APK to the Release; so does a
+# manual run with a version filled in (like windows.yml).
+# Not in the APK yet: libmpv for Android (qt/third_party/mpv-android, a prebuilt that is not in the repository): the
+# app installs and runs, but plays no video until it is added. See docs/mobile-build.md.
+# No pull_request trigger on purpose: these jobs can run on the owner's own PC (self-hosted runner), and a public
+# repository must never run a stranger's pull request there.
+name: Build Android
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Attach the APK to the Release with this version (e.g. v0.4.0); leave empty for a plain build"
+        required: false
+        default: ""
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  QT_VERSION: 6.8.3
+  NDK_VERSION: 26.3.11579264
+  # the version the app reports and compares with the Releases (src/updater.rs): v0.5.1 on a release build, else Cargo.toml
+  REELHOUSE_RELEASE: ${{ inputs.release || (startsWith(github.ref, 'refs/tags/v') && github.ref_name) || '' }}
+jobs:
+  android:
+    # GitHub's machines by default; the owner's own PC when the repository variable RUNNER_LINUX names its runner label
+    # (rh-linux, a runner on the owner's Fedora PC or WSL Ubuntu: Settings > Secrets and variables > Actions > Variables). Self-hosted runners cost no Actions minutes.
+    runs-on: ${{ vars.RUNNER_LINUX || 'ubuntu-latest' }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { abi: arm64-v8a, triple: aarch64-linux-android, qt_arch: android_arm64_v8a, label: "Android (arm64, celulares)" }
+          - { abi: x86_64, triple: x86_64-linux-android, qt_arch: android_x86_64, label: "Android (x86_64, emuladores e Waydroid)" }
+    env:
+      ABI: ${{ matrix.abi }}
+      REELHOUSE_ABI: ${{ matrix.abi }}
+      RUST_TRIPLE: ${{ matrix.triple }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: System packages and Rust (apt on GitHub's Ubuntu, dnf on the owner's Fedora)
+        run: bash .github/scripts/host-packages.sh android
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Android SDK and NDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: "platforms;android-34 build-tools;34.0.0 platform-tools ndk;26.3.11579264"
+      - name: Qt for the host (tools of the Android build)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          dir: ${{ runner.temp }}/qt
+          cache: true
+          # a self-hosted runner (Fedora) uses the system's python3 for aqtinstall: setup-python has no Fedora builds
+          setup-python: ${{ runner.environment == 'github-hosted' }}
+          # apt-get install of Qt's build dependencies; on Fedora host-packages.sh installed them with dnf
+          install-deps: ${{ runner.environment == 'github-hosted' }}
+      - name: Qt for Android
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          # Qt 6.7+ publishes the Android kits under the "all_os" host (aqtinstall), not "linux"
+          host: all_os
+          target: android
+          arch: ${{ matrix.qt_arch }}
+          # Qt WebView: Research mode's pages in the Android System WebView
+          modules: qtwebview
+          dir: ${{ runner.temp }}/qt
+          cache: true
+          # a self-hosted runner (Fedora) uses the system's python3 for aqtinstall: setup-python has no Fedora builds
+          setup-python: ${{ runner.environment == 'github-hosted' }}
+          # apt-get install of Qt's build dependencies; on Fedora host-packages.sh installed them with dnf
+          install-deps: ${{ runner.environment == 'github-hosted' }}
+      - name: Rust for Android
+        run: |
+          rustup target add ${{ env.RUST_TRIPLE }}
+          command -v cargo-ndk >/dev/null || cargo install cargo-ndk --locked
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target-android
+          key: android-${{ matrix.abi }}-${{ hashFiles('qtbridge/Cargo.lock', 'Cargo.lock', 'build-android.sh') }}
+          restore-keys: android-${{ matrix.abi }}-
+      - name: Build (build-android.sh)
+        env:
+          ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
+          ANDROID_NDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}/ndk/${{ env.NDK_VERSION }}
+          QT_ANDROID: ${{ runner.temp }}/qt/Qt/${{ env.QT_VERSION }}/${{ matrix.qt_arch }}
+          QT_HOST: ${{ runner.temp }}/qt/Qt/${{ env.QT_VERSION }}/gcc_64
+        run: |
+          set +e
+          bash build-android.sh
+          code=$?
+          grep -E "^error|error:|FAILED|== WARNING" build-android.log | head -20 | while IFS= read -r l; do echo "::warning::${l:0:300}"; done
+          if [ $code -ne 0 ]; then echo "::error title=build-android.log (last lines)::$(tail -n 40 build-android.log | cut -c1-200 | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')"; fi
+          exit $code
+      - uses: actions/upload-artifact@v4
+        continue-on-error: true
+        if: always()
+        with:
+          name: android-build-log
+          path: build-android.log
+      - uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: ReelHouse-android-${{ env.ABI }}
+          path: dist/ReelHouse-android-${{ env.ABI }}.apk
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v') || startsWith(inputs.release, 'v')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release || github.ref_name }}
+          target_commitish: ${{ github.sha }}
+          files: dist/ReelHouse-android-${{ env.ABI }}.apk
+          # every workflow of a version adds its paragraph to the Release text
+          append_body: true
+          body: |
+            **${{ matrix.label }}:** baixe `ReelHouse-android-${{ matrix.abi }}.apk`, permita "fontes desconhecidas" e instale.
+            Versão de teste (assinatura de depuração, sem vídeo até o libmpv entrar no pacote).

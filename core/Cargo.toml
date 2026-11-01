@@ -1,0 +1,30 @@
+[package]
+name = "reelhouse-core"
+version = "0.2.0"
+edition = "2021"
+license = "MIT"
+description = "Addon client, stream resolution, subtitles, Anime4K and mpv control for Reelhouse"
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net", "io-util", "process", "sync", "fs"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "gzip"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+regex = "1"
+sha1 = "0.10"
+hex = "0.4"
+flate2 = "1"
+tar = "0.4"
+encoding_rs = "0.8"
+futures-util = "0.3"
+urlencoding = "2"
+url = "2"
+
+[dev-dependencies]
+httpmock = "0.7"
+tempfile = "3"
+
+[[bin]]
+name = "fake-mpv"
+path = "src/bin/fake_mpv.rs"

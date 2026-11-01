@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=ReelHouse
+GenericName=Media Center
+GenericName[pt_BR]=Central de mídia
+Comment=Watch videos, read manga and novels, and study languages
+Comment[pt_BR]=Assista vídeos, leia mangás e novels e estude idiomas
+Exec=reelhouse
+Icon=reelhouse
+Terminal=false
+Categories=AudioVideo;Video;Player;Education;
+Keywords=video;anime;manga;novel;anki;player;mpv;

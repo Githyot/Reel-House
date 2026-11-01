@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The loading screen while the app starts: the app's dark colour with the macaw's disc in the middle at its own size
+     (160 dp). Qt shows android.app.splash_screen_drawable stretched to the whole screen, so the picture goes in a
+     layer list with gravity="center": only the colour stretches, the logo never does. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android" android:opacity="opaque">
+    <item android:drawable="@color/splash_background"/>
+    <item>
+        <bitmap android:src="@drawable/splash_logo" android:gravity="center" android:antialias="true" android:filter="true"/>
+    </item>
+</layer-list>

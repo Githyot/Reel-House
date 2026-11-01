@@ -1,0 +1,15 @@
+{
+  "_comment" : "The app icon: the macaw with popcorn, 1024x1024 without transparency (iOS rounds the corners itself). Made by tools/app_icon.py.",
+  "images" : [
+    {
+      "filename" : "reelhouse-ios-1024.png",
+      "idiom" : "universal",
+      "platform" : "ios",
+      "size" : "1024x1024"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}

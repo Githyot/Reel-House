@@ -1,0 +1,15 @@
+[package]
+name = "reelhouse"
+version = "0.2.0"
+edition = "2021"
+license = "MIT"
+description = "Reelhouse desktop app"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+reelhouse-core = { path = "../core" }
+tauri = { version = "2", features = [] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+serde_json = "1"

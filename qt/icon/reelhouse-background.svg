@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+<title>ReelHouse background</title>
+<defs>
+  <radialGradient id="gHead" cx="0.38" cy="0.32" r="0.75">
+    <stop offset="0" stop-color="#5b8cf5"/><stop offset="0.55" stop-color="#3567dc"/><stop offset="1" stop-color="#2347ad"/>
+  </radialGradient>
+  <radialGradient id="gBody" cx="0.4" cy="0.3" r="0.8">
+    <stop offset="0" stop-color="#5b8cf5"/><stop offset="0.5" stop-color="#3567dc"/><stop offset="1" stop-color="#2347ad"/>
+  </radialGradient>
+  <radialGradient id="gBelly" cx="0.5" cy="0.35" r="0.7">
+    <stop offset="0" stop-color="#6d98f7"/><stop offset="1" stop-color="#4a7ef0"/>
+  </radialGradient>
+  <linearGradient id="gWing" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#3567dc"/><stop offset="1" stop-color="#1a3690"/>
+  </linearGradient>
+  <linearGradient id="gTail" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#2347ad"/><stop offset="1" stop-color="#1a3690"/>
+  </linearGradient>
+  <linearGradient id="gBeak" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#5d6475"/><stop offset="0.6" stop-color="#3c414e"/><stop offset="1" stop-color="#262932"/>
+  </linearGradient>
+  <linearGradient id="gCan" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0" stop-color="#17863a"/><stop offset="0.35" stop-color="#3fd06a"/><stop offset="1" stop-color="#17863a"/>
+  </linearGradient>
+  <linearGradient id="gHat" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0" stop-color="#3a3c4a"/><stop offset="0.4" stop-color="#1d1e26"/><stop offset="1" stop-color="#0d0d12"/>
+  </linearGradient>
+  <radialGradient id="gMedal" cx="0.4" cy="0.35" r="0.7">
+    <stop offset="0" stop-color="#ffe27a"/><stop offset="1" stop-color="#f4b52f"/>
+  </radialGradient>
+</defs>
+<defs>
+  <linearGradient id="gIconBg" x1="0" y1="0" x2="0.35" y2="1">
+    <stop offset="0" stop-color="#ffd84d"/><stop offset="1" stop-color="#ff9d2e"/>
+  </linearGradient>
+  <radialGradient id="gIconGlow" cx="0.5" cy="0.42" r="0.55">
+    <stop offset="0" stop-color="#fff6c8" stop-opacity="0.95"/><stop offset="1" stop-color="#fff6c8" stop-opacity="0"/>
+  </radialGradient>
+  <linearGradient id="gBucketRed" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0" stop-color="#c42536"/><stop offset="0.35" stop-color="#ef3b4a"/><stop offset="1" stop-color="#c42536"/>
+  </linearGradient>
+  <linearGradient id="gBucketWhite" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0" stop-color="#e9e3f0"/><stop offset="0.35" stop-color="#ffffff"/><stop offset="1" stop-color="#ddd6e6"/>
+  </linearGradient>
+</defs>
+<rect x="0" y="0" width="256" height="256" rx="0" fill="url(#gIconBg)"/><rect x="0" y="0" width="256" height="256" rx="0" fill="url(#gIconGlow)"/>
+</svg>

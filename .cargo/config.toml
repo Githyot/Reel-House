@@ -1,0 +1,4 @@
+# Read by every cargo run started from the project folder (the Qt CMake build runs cargo here).
+# Two jobs at a time: each rustc-LLVM process of a large crate can take several GB; many at once ran out of memory.
+[build]
+jobs = 2

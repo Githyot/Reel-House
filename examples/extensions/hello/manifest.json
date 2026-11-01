@@ -1,0 +1,8 @@
+{
+  "id": "hello",
+  "name": "Hello",
+  "version": "1.0",
+  "description": "Example: a toast when a title opens and when a clip is saved.",
+  "main": "main.js",
+  "hooks": ["onTitleOpened", "onClipSaved"]
+}

@@ -1,0 +1,229 @@
+# Builds the Linux app (x86_64) and packs it as a .deb and a .rpm: the Rust core, then the Qt app with Qt 6.8.3 from
+# aqtinstall (Ubuntu's own Qt is older than the 6.6 the app needs). linuxdeploy copies Qt, its plugins and the QML
+# modules next to the program, and nfpm packs that tree into /opt/reelhouse with a `reelhouse` command, a menu entry
+# and the icon (packaging/linux/). Video plays through the system's libmpv, a dependency of both packages.
+# Built on Ubuntu 22.04 so the packages also run on older systems (glibc 2.35: Ubuntu 22.04+, Debian 12+, Fedora 37+).
+# Built on the owner's Fedora runner, they need that Fedora's glibc or newer (older Ubuntu/Debian may refuse them).
+# Not in these builds: Chromium for Research mode (it opens pages in the system browser) and Suwayomi.
+# Runs by hand (Actions > Build Linux > Run workflow), on version tags; never on pull requests.
+# A tag attaches both packages to the Release; so does a manual run with a version filled in (like windows.yml).
+# No pull_request trigger on purpose: these jobs can run on the owner's own PC (self-hosted runner), and a public
+# repository must never run a stranger's pull request there.
+name: Build Linux
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Attach the .deb and .rpm to the Release with this version (e.g. v0.4.0); leave empty for a plain build"
+        required: false
+        default: ""
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+concurrency:
+  group: linux-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  QT_VERSION: 6.8.3
+  # the version the app reports and compares with the Releases (src/updater.rs): v0.5.1 on a release build, else Cargo.toml
+  REELHOUSE_RELEASE: ${{ inputs.release || (startsWith(github.ref, 'refs/tags/v') && github.ref_name) || '' }}
+jobs:
+  linux:
+    # GitHub's machines by default; the owner's own PC when the repository variable RUNNER_LINUX names its runner label
+    # (rh-linux, a runner on the owner's Fedora PC or WSL Ubuntu: Settings > Secrets and variables > Actions > Variables). Self-hosted runners cost no Actions minutes.
+    runs-on: ${{ vars.RUNNER_LINUX || 'ubuntu-22.04' }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: System packages and Rust (apt on GitHub's Ubuntu, dnf on the owner's Fedora)
+        run: bash .github/scripts/host-packages.sh linux
+      - name: Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          # pictures as WebP/TIFF (qtimageformats), the microphone of Conversation (qtmultimedia), the offline voice (qtspeech)
+          modules: qtimageformats qtmultimedia qtspeech
+          dir: ${{ runner.temp }}/qt
+          cache: true
+          # a self-hosted runner (Fedora) uses the system's python3 for aqtinstall: setup-python has no Fedora builds
+          setup-python: ${{ runner.environment == 'github-hosted' }}
+          # apt-get install of Qt's build dependencies; on Fedora host-packages.sh installed them with dnf
+          install-deps: ${{ runner.environment == 'github-hosted' }}
+      - name: Restore the Rust cache
+        id: rcache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target-qt
+          key: linux-${{ hashFiles('qtbridge/Cargo.lock', 'Cargo.lock') }}
+          restore-keys: linux-
+      - name: Fetch rqbit and the Anime4K shaders into assets/
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash fetch-assets.sh linux
+      - name: Rust core
+        run: |
+          cargo --version
+          cargo build --release --manifest-path qtbridge/Cargo.toml --target-dir target-qt > rust-linux.log 2>&1 || { tail -n 80 rust-linux.log; exit 1; }
+          ls -la target-qt/release/libreelhouse_qtbridge.a
+      # saved as soon as the core is built, so that a later failing step still leaves it for the next run
+      - name: Save the Rust cache
+        if: steps.rcache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target-qt
+          key: linux-${{ hashFiles('qtbridge/Cargo.lock', 'Cargo.lock') }}
+      - name: Build (CMake)
+        run: |
+          set -o pipefail
+          cmake -S qt -B build-linux -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR" \
+            -DREELHOUSE_BUILD_RUST=OFF -DREELHOUSE_RUST_LIB="$PWD/target-qt/release/libreelhouse_qtbridge.a" 2>&1 | tee build-linux.log
+          cmake --build build-linux 2>&1 | tee -a build-linux.log
+      - name: Bundle Qt (linuxdeploy)
+        run: |
+          cd "$RUNNER_TEMP"
+          for t in linuxdeploy/linuxdeploy/linuxdeploy-x86_64 linuxdeploy/linuxdeploy-plugin-qt/linuxdeploy-plugin-qt-x86_64; do
+            curl -fsSL --retry 3 -o "${t##*/}.AppImage" "https://github.com/${t%/*}/releases/download/continuous/${t##*/}.AppImage"
+            chmod +x "${t##*/}.AppImage"
+          done
+          cd "$GITHUB_WORKSPACE"
+          # no FUSE on the runner; qmake tells the Qt plugin where Qt is; the QML files are scanned for their imports
+          export APPIMAGE_EXTRACT_AND_RUN=1 QMAKE="$QT_ROOT_DIR/bin/qmake" QML_SOURCES_PATHS="$PWD/qt/qml"
+          export LD_LIBRARY_PATH="$QT_ROOT_DIR/lib:${LD_LIBRARY_PATH:-}"
+          # the SVG pictures (mascot, icons) load through the svg image plugin, which nothing links to
+          export EXTRA_QT_MODULES="svg" EXTRA_QT_PLUGINS="svg"
+          # linuxdeploy's own strip is too old for newer systems' libraries (.relr.dyn on Fedora): skip it there
+          if [ "$RUNNER_ENVIRONMENT" != "github-hosted" ]; then export NO_STRIP=1; fi
+          set +e
+          "$RUNNER_TEMP/linuxdeploy-x86_64.AppImage" --appdir AppDir --executable build-linux/reelhouse-qt --plugin qt > linuxdeploy.log 2>&1
+          code=$?
+          set -e
+          grep -E "ERROR|WARNING|blacklisted" linuxdeploy.log | cut -c1-200 | sort -u | head -80 || true
+          if [ $code -ne 0 ]; then tail -n 60 linuxdeploy.log | cut -c1-250; exit $code; fi
+          # on GNOME the program asks for the desktop portal theme (colours, native file dialogs; see main.cpp), a
+          # plugin that linuxdeploy leaves out
+          pt="$QT_ROOT_DIR/plugins/platformthemes/libqxdgdesktopportal.so"
+          if [ -f "$pt" ] && [ ! -f AppDir/usr/plugins/platformthemes/libqxdgdesktopportal.so ]; then
+            mkdir -p AppDir/usr/plugins/platformthemes && cp -f "$pt" AppDir/usr/plugins/platformthemes/
+            patchelf --set-rpath '$ORIGIN/../../lib' AppDir/usr/plugins/platformthemes/libqxdgdesktopportal.so
+            ldd AppDir/usr/plugins/platformthemes/libqxdgdesktopportal.so | grep -E "not found|Qt6" || true
+          fi
+          # the offline voice (LocalTts.qml): Qt's speech-dispatcher backend, also left out by linuxdeploy; it loads
+          # when the system has libspeechd (a recommended package), otherwise the app simply has no local voice
+          tts="$QT_ROOT_DIR/plugins/texttospeech/libqtexttospeech_speechd.so"
+          if [ -f "$tts" ] && [ ! -f AppDir/usr/plugins/texttospeech/libqtexttospeech_speechd.so ]; then
+            mkdir -p AppDir/usr/plugins/texttospeech && cp -f "$tts" AppDir/usr/plugins/texttospeech/
+            patchelf --set-rpath '$ORIGIN/../../lib' AppDir/usr/plugins/texttospeech/libqtexttospeech_speechd.so
+          fi
+          # the Learn course packs and the kana sounds go next to the program, the first place the core looks
+          mkdir -p AppDir/usr/bin/learn AppDir/usr/bin/kana
+          cp -f assets/learn/*.json AppDir/usr/bin/learn/
+          cp -f assets/kana/*.ogg assets/kana/CREDITS.md AppDir/usr/bin/kana/
+          cat AppDir/usr/bin/qt.conf
+          du -sh AppDir/usr AppDir/usr/lib AppDir/usr/plugins AppDir/usr/qml 2>/dev/null || true
+          ls AppDir/usr/plugins
+      - name: Package (.deb and .rpm, nfpm)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE: ${{ inputs.release || (startsWith(github.ref, 'refs/tags/v') && github.ref_name) || '' }}
+        run: |
+          exec > >(tee package.log) 2>&1
+          gh release download -R goreleaser/nfpm -p 'nfpm_*_Linux_x86_64.tar.gz' -D "$RUNNER_TEMP/nfpm" --clobber
+          tar -xzf "$RUNNER_TEMP"/nfpm/nfpm_*_Linux_x86_64.tar.gz -C "$RUNNER_TEMP/nfpm" nfpm
+          NFPM="$RUNNER_TEMP/nfpm/nfpm"; "$NFPM" --version | head -3
+          # the release version (v0.5.1 -> 0.5.1), else the core's version marked as a development build
+          if [[ "$RELEASE" == v* ]]; then export RH_VERSION="${RELEASE#v}"
+          else export RH_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)-dev.${GITHUB_RUN_NUMBER}"; fi
+          echo "package version: $RH_VERSION"
+          mkdir -p dist
+          "$NFPM" package -f packaging/linux/nfpm.yaml -p deb -t dist/ReelHouse-linux-x86_64.deb
+          "$NFPM" package -f packaging/linux/nfpm.yaml -p rpm -t dist/ReelHouse-linux-x86_64.rpm
+          ls -la dist
+          dpkg-deb --info dist/ReelHouse-linux-x86_64.deb
+          dpkg-deb --contents dist/ReelHouse-linux-x86_64.deb | grep -E " ./usr/|reelhouse-qt$|qt.conf$" | cut -c1-160
+      - name: Report (a notice on the run page)
+        run: |
+          set +e
+          {
+            echo "deb $(du -h dist/ReelHouse-linux-x86_64.deb | cut -f1), rpm $(du -h dist/ReelHouse-linux-x86_64.rpm | cut -f1), AppDir $(du -sh AppDir/usr | cut -f1)"
+            dpkg-deb -f dist/ReelHouse-linux-x86_64.deb Version Depends
+            echo "rqbit: $(wc -c < assets/rqbit 2>/dev/null || echo none) bytes; shaders: $(ls assets/shaders/*.glsl 2>/dev/null | wc -l)"
+            echo "plugins: $(cd AppDir/usr/plugins && ls -d */* | tr '\n' ' ')"
+            echo "qml: $(ls AppDir/usr/qml | tr '\n' ' ')"
+            echo "lib: $(ls AppDir/usr/lib | tr '\n' ' ')"
+            echo "left to the system by linuxdeploy: $(grep -iE 'blacklist|exclud' linuxdeploy.log | grep -oE '[^ /]+\.so[.0-9]*' | sort -u | tr '\n' ' ')"
+            echo "linuxdeploy warnings:"; grep -E "WARNING|ERROR" linuxdeploy.log | grep -v "copyright files" | cut -c1-200 | sort -u | head -15
+            echo "not found by ldd:"
+            find AppDir -type f -name '*.so*' -o -type f -path '*/bin/*' | while read -r f; do
+              if file -b "$f" | grep -q ELF; then ldd "$f" 2>/dev/null | grep "not found" | sed "s|^|${f#AppDir/usr/}: |"; fi
+            done | sort -u | head -25
+          } > report.txt 2>&1
+          python3 -c 'import sys
+          out, cur = [], ""
+          for l in open("report.txt", errors="replace").read().splitlines():
+              l = l[:3200]
+              if len(cur) + len(l) > 3200: out.append(cur); cur = ""
+              cur += l + "\n"
+          out.append(cur)
+          for i, t in enumerate(out):
+              print("::notice title=Linux build (%d/%d)::" % (i + 1, len(out)) + t.replace("%", "%25").replace("\r", "").replace("\n", "%0A"))'
+      - name: Errors as annotations (shown on the run page)
+        if: failure()
+        run: |
+          cat > "$RUNNER_TEMP/annotate.py" <<'PY'
+          import re, sys
+          f = sys.argv[1]
+          lines = open(f, errors="replace").read().splitlines()
+          pat = re.compile(r"error|FAILED|undefined|Undefined symbols|ld: |CMake Error|not found|No such file", re.I)
+          seen, hits = set(), []
+          for l in lines:
+              if pat.search(l) and "warning" not in l.lower() and l not in seen:
+                  seen.add(l)
+                  hits.append(l)
+          body = hits[:45] + ["---- last lines ----"] + lines[-25:]
+          msg = "\n".join(l[:300] for l in body).replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+          print(f"::error title={f}::{msg}")
+          PY
+          for f in rust-linux.log build-linux.log linuxdeploy.log package.log; do
+            if [ -f "$f" ]; then python3 "$RUNNER_TEMP/annotate.py" "$f"; fi
+          done
+      - uses: actions/upload-artifact@v4
+        continue-on-error: true
+        if: always()
+        with:
+          name: linux-build-log
+          path: |
+            rust-linux.log
+            build-linux.log
+            linuxdeploy.log
+            package.log
+      - uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: ReelHouse-linux-x86_64
+          path: |
+            dist/ReelHouse-linux-x86_64.deb
+            dist/ReelHouse-linux-x86_64.rpm
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v') || startsWith(inputs.release, 'v')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release || github.ref_name }}
+          target_commitish: ${{ github.sha }}
+          files: |
+            dist/ReelHouse-linux-x86_64.deb
+            dist/ReelHouse-linux-x86_64.rpm
+          append_body: true
+          body: |
+            **Linux (x86_64):** Ubuntu/Debian: baixe `ReelHouse-linux-x86_64.deb` e rode `sudo apt install ./ReelHouse-linux-x86_64.deb`;
+            Fedora/openSUSE: baixe `ReelHouse-linux-x86_64.rpm` e rode `sudo dnf install ./ReelHouse-linux-x86_64.rpm`. Abra "ReelHouse" no menu
+            ou rode `reelhouse`. O vídeo usa o libmpv do sistema (instalado junto como dependência; no Fedora vem do pacote `mpv-libs`).

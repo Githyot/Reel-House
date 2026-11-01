@@ -1,0 +1,7 @@
+qt/third_party/
+target/
+target-qt/
+qtbridge/target/
+dist/
+qt/build/
+__pycache__/

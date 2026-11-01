@@ -1,0 +1,74 @@
+[package]
+name = "reelhouse"
+version = "0.3.0"
+edition = "2021"
+description = "Core of Reelhouse (media center with mpv built in, addons, Real-Debrid, Anime4K, translated subtitles and Anime Skip). The interface is Qt (qt/ and qtbridge/)."
+license = "GPL-3.0-or-later"
+build = "build.rs"
+
+[lib]
+name = "reelhouse"
+path = "src/lib.rs"
+
+[features]
+default = ["app", "js", "webp", "desktop"]
+# Where the app runs. `desktop` (Windows, Linux, macOS) may start helper programs: the rqbit torrent engine, the
+# Suwayomi server (Java), the Real-ESRGAN upscaler, yt-dlp and a local Ollama. `mobile` (Android, iOS) may not: those
+# parts answer with a clear message instead (see src/platform.rs). The Android and iOS targets turn `mobile` on by
+# themselves (build.rs sets the `reelhouse_mobile` cfg), so a mobile build needs no feature flag beyond
+# `--no-default-features --features "app js webp mobile"`.
+desktop = ["dep:adblock"]
+mobile = []
+# The torrent engine (librqbit) inside the app instead of the rqbit program: for Android, which cannot start helper
+# programs. It serves the same HTTP API on 127.0.0.1, so the rest of the code talks to it exactly like to rqbit.
+torrent-embed = ["dep:librqbit", "dep:librqbit-dualstack-sockets", "dep:tokio"]
+# QuickJS bindings made on the build machine (libclang needed) for targets rquickjs ships none for, such as Android.
+js-bindgen = ["js", "rquickjs?/bindgen"]
+# mpv bridge, networking and the app logic
+app = ["dep:ureq", "dep:libloading", "dep:ruzstd", "dep:tungstenite", "dep:flate2"]
+# Pages and covers kept on disk as WebP: JPEG / PNG decoded in Rust, encoded lossy by libwebp.
+webp = ["dep:png", "dep:jpeg-decoder", "dep:libwebp"]
+# The JavaScript engine (QuickJS) that runs the Text mode plugins. Needs a C compiler.
+js = ["dep:rquickjs"]
+# Only for testing inside a sandbox that reaches the internet through a proxy: proxy from the environment, system certificates.
+devproxy = ["app", "ureq/native-certs"]
+
+[dependencies]
+ureq = { version = "2.10", optional = true }
+# gzip (already built for ureq and png): the Anime4K shaders archive is unpacked inside the app, Android has no `tar`.
+flate2 = { version = "1", optional = true }
+# Research mode's ad blocker (Brave's adblock-rust, MPL-2.0): EasyList / EasyPrivacy / uBlock filters matching.
+# Without "single-thread" so the engine can be read from Chromium's network thread.
+adblock = { version = "0.13", optional = true, default-features = false, features = ["embedded-domain-resolver", "full-regex-handling"] }
+# zstd (pure Rust) for the AnkiWeb sync protocol, which compresses every request and answer.
+ruzstd = { version = "0.8", optional = true }
+libloading = { version = "0.8", optional = true }
+librqbit = { version = "9.1", optional = true, default-features = false, features = ["http-api", "tracing-subscriber-utils", "rust-tls"] }
+librqbit-dualstack-sockets = { version = "0.7", optional = true }
+tokio = { version = "1", optional = true, features = ["rt-multi-thread", "net"] }
+rquickjs = { version = "0.9", optional = true }
+# WebP: pages of the Images mode are stored as WebP. The pages come as JPEG, PNG or WebP and are decoded first.
+png = { version = "0.17", optional = true }
+jpeg-decoder = { version = "0.3", optional = true, default-features = false }
+# Lossy WebP encoder (libwebp, built from its bundled C source; image-webp only writes lossless files).
+libwebp = { package = "webp", version = "0.3", optional = true, default-features = false }
+
+# Gemini Live (Study > Conversation by voice, desktop only): a WebSocket over the same rustls (ring) and webpki-roots
+# certificates as ureq; nothing new to install on Windows (MSYS2), Linux or macOS. Android and iOS do not build it.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tungstenite = { version = "0.30", optional = true, default-features = false, features = ["handshake", "rustls-tls-webpki-roots"] }
+
+# The release build ends in a static library holding the whole core (and the embedded libmpv / rqbit). Thin LTO over
+# all of it ran rustc-LLVM out of memory: no LTO, few codegen units, and few parallel jobs (.cargo/config.toml).
+[profile.release]
+opt-level = 3
+lto = false
+codegen-units = 2
+strip = true
+debug = false
+incremental = false
+
+# Dependencies build with less optimisation: they are many, and this keeps the peak memory and time down.
+[profile.release.package."*"]
+opt-level = 2
+codegen-units = 4

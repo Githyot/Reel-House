@@ -1,0 +1,7 @@
+Reelhouse is free software: you can redistribute it and/or modify it under the terms of the
+GNU General Public License, version 3 or (at your option) any later version.
+
+The Windows build embeds libmpv (built from mpv, GPL), so the combined program is distributed
+under the GPL. Get the full text at https://www.gnu.org/licenses/gpl-3.0.txt and ship it with
+any binary you share. mpv source: https://github.com/mpv-player/mpv
+Anime4K shaders: MIT, https://github.com/bloc97/Anime4K
