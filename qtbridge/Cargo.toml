@@ -50,3 +50,7 @@ hidapi = { version = "2.6", default-features = false, features = ["windows-nativ
 
 [target.'cfg(target_os = "macos")'.dependencies]
 hidapi = { version = "2.6", default-features = false }
+
+# The torrent engine with one streaming fix (see third_party/librqbit/REELHOUSE.md).
+[patch.crates-io]
+librqbit = { path = "../third_party/librqbit" }
