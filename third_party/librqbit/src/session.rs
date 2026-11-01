@@ -155,7 +155,7 @@ pub struct Session {
 
 /// A 40 character hex string is a v1 info hash. Checking the length alone
 /// also matches URLs that happen to be 40 characters long, such as
-/// https://nyaa.si/download/1234567.torrent.
+/// https://example.org/download/1234567.torrent.
 fn is_bare_info_hash(s: &str) -> bool {
     s.len() == 40 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
@@ -1836,7 +1836,7 @@ mod tests {
         ));
         // 40 characters, but a URL.
         assert!(!is_bare_info_hash(
-            "https://nyaa.si/download/2164312.torrent"
+            "https://example.org/download/2164312.torrent"
         ));
         assert!(!is_bare_info_hash(
             "08ada5a7a6183aae1e09d831df6748d566095a1"
