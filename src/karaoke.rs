@@ -109,6 +109,11 @@ fn norm(s: &str) -> String {
     s.to_lowercase().chars().filter(|c| c.is_alphanumeric()).collect()
 }
 
+/// Whether an AniList format is one of a series' (TV, short TV, web), not a film, special, OVA or music video.
+pub fn series_kind(format: &str) -> bool {
+    matches!(format, "TV" | "TV_SHORT" | "ONA" | "")
+}
+
 /// A name without its season part: "Dandadan 2nd Season", "DAN DA DAN Season 2", "Mob Psycho 100 II" or
 /// "ダンダダン 第2期" become the name of the series. The site keeps every season of a series under one name.
 pub fn base_name(n: &str) -> String {
@@ -700,6 +705,7 @@ mod tests {
         assert_eq!(base_name("86"), "86");
         assert_eq!(base_name("Mob Psycho 100"), "Mob Psycho 100");
         assert_eq!(base_name("Steins;Gate 0"), "Steins;Gate 0");
+        assert!(series_kind("TV") && series_kind("ONA") && !series_kind("MOVIE") && !series_kind("MUSIC") && !series_kind("OVA"));
     }
 
     #[test]
@@ -777,7 +783,7 @@ mod live_tests {
             for x in list.iter().take(5) {
                 println!("  anilist: mal {} {:?} {:?} {:?}", x.id, x.kind, x.year, x.names.iter().take(3).collect::<Vec<_>>());
             }
-            let Some(f) = list.first() else { println!("{} S{}: AniList found nothing", show, season); continue };
+            let Some(f) = list.iter().find(|f| series_kind(&f.kind)) else { println!("{} S{}: AniList found nothing", show, season); continue };
             let mut names: Vec<String> = f.names.first().filter(|n| !n.is_empty()).cloned().into_iter().collect();
             names.push(show.to_string());
             names.extend(f.names.iter().skip(1).filter(|n| !n.is_empty()).cloned());
