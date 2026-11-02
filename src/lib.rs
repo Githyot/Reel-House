@@ -6,6 +6,7 @@ pub mod browser;
 pub mod anilist;
 pub mod animeskip;
 pub mod anime4k;
+pub mod audiosync;
 pub mod artwork;
 pub mod backup;
 pub mod cloud;
@@ -53,7 +54,10 @@ pub mod sitepass;
 pub mod sqlite;
 pub mod study;
 pub mod skipdb;
+pub mod streamlang;
 pub mod streams;
+pub mod streammemory;
+pub mod subsync;
 pub mod theme;
 pub mod substyle;
 pub mod subtitles;
@@ -70,6 +74,8 @@ pub mod util;
 pub mod controller;
 #[cfg(feature = "app")]
 pub mod mpv;
+#[cfg(feature = "app")]
+pub mod mkvsubs;
 #[cfg(feature = "app")]
 pub mod net;
 #[cfg(feature = "app")]

@@ -11,6 +11,8 @@ Item {
     property bool password: false
     property bool apply: false
     property bool first: true
+    // Grey hint shown while the field is empty.
+    property string placeholder: ""
     // What is in the field now (`text` is only the value given from outside; typing does not change it).
     readonly property alias value: field.text
     signal edited(string text)
@@ -27,6 +29,8 @@ Item {
         width: parent.width - 12 - (applyBtn.visible ? 44 : 0) - (eye.visible ? 40 : 0)
         height: 34
         text: e.text
+        placeholderText: e.placeholder
+        placeholderTextColor: Theme.c.textDim
         echoMode: e.password && !eye.shown ? TextInput.Password : TextInput.Normal
         color: Theme.c.text
         font.pixelSize: 15

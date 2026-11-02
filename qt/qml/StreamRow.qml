@@ -33,7 +33,42 @@ Rectangle {
         id: col
         anchors { left: ic.right; leftMargin: 12; right: badges.left; rightMargin: 10; verticalCenter: parent.verticalCenter }
         spacing: 2
-        Text { width: parent.width; text: sr.stream.headline || sr.stream.name || ""; color: Theme.c.text; font.pixelSize: 15; font.weight: Font.Bold; font.family: Theme.type.family; elide: Text.ElideRight }
+        // the headline, then a flag for each audio language its name says it carries (HP, 2026-11-02)
+        Item {
+            width: parent.width
+            height: head.implicitHeight
+            Text {
+                id: head
+                width: Math.min(implicitWidth, parent.width - (flags.visible ? flags.width + 8 : 0))
+                text: sr.stream.headline || sr.stream.name || ""
+                color: Theme.c.text; font.pixelSize: 15; font.weight: Font.Bold; font.family: Theme.type.family; elide: Text.ElideRight
+            }
+            Row {
+                id: flags
+                readonly property var audio: sr.stream.audio || []
+                visible: audio.length > 0 || !!sr.stream.multiAudio
+                anchors { left: head.right; leftMargin: 8; verticalCenter: head.verticalCenter }
+                spacing: 4
+                Repeater {
+                    model: flags.audio.slice(0, 4)
+                    delegate: Flag { required property var modelData; code: modelData.flag; h: 13; anchors.verticalCenter: parent.verticalCenter }
+                }
+                // "+2" when more languages, "DUAL"/"MULTI" when the name says so without naming them all
+                Rectangle {
+                    readonly property string label: flags.audio.length > 4 ? "+" + (flags.audio.length - 4)
+                        : (sr.stream.multiAudio && flags.audio.length < 2 ? "MULTI" : "")
+                    visible: label !== ""
+                    anchors.verticalCenter: parent.verticalCenter
+                    radius: 3
+                    color: "transparent"
+                    border.width: 1
+                    border.color: Theme.c.textDim
+                    implicitWidth: ml.implicitWidth + 8
+                    implicitHeight: 15
+                    Text { id: ml; anchors.centerIn: parent; text: parent.label; color: Theme.c.textDim; font.pixelSize: 10; font.weight: Font.Bold; font.family: Theme.type.family }
+                }
+            }
+        }
         Repeater {
             model: sr.lines
             delegate: Text { required property var modelData; width: col.width; text: modelData; color: Theme.c.textDim; font.pixelSize: 13; font.family: Theme.type.family; elide: Text.ElideRight }

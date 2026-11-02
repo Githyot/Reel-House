@@ -945,7 +945,7 @@ void WebPane::syncShown() {
     const bool minimized = m_window && (m_window->visibility() == QWindow::Minimized || !m_window->isVisible());
     bool want = m_keepRendering || (isVisible() && !minimized && width() > 2 && height() > 2);
 #ifdef REELHOUSE_WEBVIEW
-    want = want && !m_covered && isVisible();
+    want = want && !m_covered && !m_overlaid && isVisible();
 #endif
     checkScale();
     if (want != m_shown) {
@@ -987,6 +987,42 @@ void WebPane::watchWindow(QQuickWindow *w) {
     m_windowConns << connect(w, &QQuickWindow::afterAnimating, this, &WebPane::checkScale);
     m_windowConns << connect(w, &QWindow::visibilityChanged, this, &WebPane::syncShown);
     m_windowConns << connect(w, &QWindow::screenChanged, this, &WebPane::checkScale);
+    m_overlay = nullptr;
+#ifdef REELHOUSE_WEBVIEW
+    m_windowConns << connect(w, &QQuickWindow::afterAnimating, this, &WebPane::checkOverlay);
+#endif
+}
+
+// The Android WebView is a native view drawn above the whole Qt Quick scene, so a Menu, Popover, Drawer or Dialog
+// opened over the page (the "Research ▾" mode menu, the bottom sheets…) was cut off by it. Popups live in the
+// window's overlay: while one that can be seen overlaps this pane, the page is hidden, as with `covered`.
+// Only popup items count (not the toast or other plain items placed in the overlay), and not tooltips.
+// On desktop Chromium is drawn into the scene, so nothing is needed there.
+void WebPane::checkOverlay() {
+#ifdef REELHOUSE_WEBVIEW
+    bool over = false;
+    if (m_window && isVisible() && m_current > 0) {
+        if (!m_overlay && m_window->contentItem()) {
+            const auto kids = m_window->contentItem()->childItems();
+            for (QQuickItem *k : kids)
+                if (k->inherits("QQuickOverlay")) { m_overlay = k; break; }
+        }
+        if (m_overlay) {
+            const QRectF mine = mapRectToScene(QRectF(0, 0, width(), height()));
+            const auto kids = m_overlay->childItems();
+            for (QQuickItem *k : kids) {
+                if (!k->isVisible() || k->opacity() < 0.01 || !k->inherits("QQuickPopupItem")) continue;
+                if (k->parent() && k->parent()->inherits("QQuickToolTip")) continue;
+                if (k->mapRectToScene(QRectF(0, 0, k->width(), k->height())).intersects(mine)) { over = true; break; }
+            }
+        }
+    }
+    if (over != m_overlaid) {
+        m_overlaid = over;
+        qInfo("[web] popup over the page: %s", over ? "hiding the WebView" : "showing the WebView again");
+        syncShown();
+    }
+#endif
 }
 
 void WebPane::itemChange(ItemChange change, const ItemChangeData &value) {

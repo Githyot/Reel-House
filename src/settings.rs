@@ -374,6 +374,10 @@ pub struct General {
     pub autoplay_next: bool,
     /// Seconds before the end when the "next episode" card appears.
     pub next_popup_secs: u32,
+    /// A pattern (regex, case ignored) the stream that plays by itself must match, e.g. "1080p.*web". Empty: none.
+    pub autoplay_rule: String,
+    /// The user read and accepted, once, that playing a torrent shares its pieces with other people (P2P).
+    pub p2p_ok: bool,
     /// "system" (follow Languages I know, then the system) or a language code such as "pt". Use `ui_lang` to read it.
     pub language: String,
     /// "fit", "crop" or "stretch"
@@ -458,6 +462,10 @@ pub struct Subtitles {
     /// Any OpenAI-compatible server works (OpenRouter, a local server, Azure style proxies).
     pub openai_base: String,
     pub max_wait_secs: u32,
+    /// Remove the hearing-impaired notes ([music], (laughs), "JOHN:") from downloaded subtitles.
+    pub strip_sdh: bool,
+    /// Line a downloaded subtitle up with the speech of the video by itself, once per video (crate::subsync).
+    pub auto_sync: bool,
     pub style: SubStyle,
 }
 
@@ -610,7 +618,7 @@ impl Default for Settings {
         Settings {
             version: SETTINGS_VERSION,
             anime_skip: AnimeSkip { enabled: true, ..AnimeSkip::default() },
-            general: General { autocards_url: "http://127.0.0.1:8765".into(), autocards_deck: "Mining Deck".into(), autocards_model: "Lapis".into(), autocards_f_sentence: "Sentence".into(), autocards_f_expression: "Expression".into(), autocards_f_picture: "Picture".into(), autocards_f_audio: "SentenceAudio".into(), autocards_prev: 0, autocards_next: 0, autocards_pad_ms: 250, ankiweb_user: String::new(), ankiweb_hkey: String::new(), disabled_plugins: Vec::new(), hwdec: "auto-copy".into(), buffer_seconds: 12, pick_mode: "ask".into(), preferred_height: 1080, volume: 100.0, thumbnails: true, skip_seconds: 90, ui_scale: 120, blur_unwatched: true, offline_mode: false, feedback_button: true, pad_sound: true, pad_orbs: true, pad_music: true, sound_nav: String::new(), sound_select: String::new(), sound_music: String::new(), sound_volume: 60, pad_light_accent: true, pad_light_color: String::new(), pad_light_brightness: 100, pad_touch_mouse: true, pad_touch_speed: 100, pad_deadzone: 30, pad_repeat: 90, pad_rumble: false, update_check: true, animated_bg: true, aurora_motion: false, mode: "video".into(), images_repo: String::new(), text_repo: String::new(), manga_lang: "en".into(), manga_mode: "rtl".into(), manga_saver: false, manga_source: "mangadex".into(), novel_source: String::new(), novel_size: 19, suwayomi_url: crate::suwayomi::DEFAULT_URL.into(), suwayomi_user: String::new(), suwayomi_pass: String::new(), suwayomi_managed: true, show_nsfw: false, suwayomi_repos: Vec::new(), manga_pins: vec![], karaoke_delays: vec![], karaoke: true, study_hints: true, banners: true, banner_quiet_from: 22, banner_quiet_to: 8, known_langs: vec![], study_lang: String::new(), study_in_player: false, study_quiz_rate: 50, study_quiz_cards: true, study_quiz_listen: true, study_wordmix: true, study_wordmix_rate: 50, study_wordmix_reading: true, study_mining: true, study_mining_max: 10, study_mascot_cues: true, learn_unlimited_hearts: false, study_volume: 100, kaiwa_ai: "auto".into(), kaiwa_ollama: String::new(), kaiwa_level: String::new(), kaiwa_name: String::new(), kaiwa_interests: String::new(), kaiwa_reading: false, kaiwa_romaji: false, kaiwa_translation: false, kaiwa_voice: false, kaiwa_check: true, kaiwa_autosend: true, kaiwa_handsfree: true, voice_input: "auto".into(), voice_model: "auto".into(), voice_output: "auto".into(), voice_local: String::new(), voice_pause: 0, voice_margin: 10, voice_mic: String::new(), pomo_focus: 25, pomo_short: 5, pomo_long: 15, pomo_rounds: 4, pomo_auto: false, pomo_tick: false, pomo_sound: true, karaoke_top: true, karaoke_delay: 0.0, karaoke_size: 100, karaoke_margin: 0, karaoke_color: String::new(), karaoke_font: String::new(), karaoke_bold: String::new(), karaoke_outline: -1, karaoke_shadow: -1, karaoke_unfilled: String::new(), karaoke_italic: String::new(), karaoke_underline: String::new(), karaoke_outline_color: String::new(), karaoke_back_color: String::new(), karaoke_scale_x: 0, karaoke_scale_y: 0, karaoke_spacing: -100, karaoke_align: 0, karaoke_margin_l: 0, karaoke_margin_r: 0, karaoke_border: String::new(), debug: false, reader_fit: "screen".into(), reader_zoom: 100, theme: String::new(), reader_font: 100, reader_upscale: false, reader_ocr: true, reader_translate: String::new(), manga_langs: vec!["en".into()], novel_langs: vec![], text_font: String::new(), text_line: 170, text_indent: 0, text_word: 0, text_align: "start".into(), text_bg: "app".into(), text_bg_color: "#fbf0d9".into(), text_fg: String::new(), text_width: 760, text_head_size: 135, text_head_color: String::new(), text_head_center: false, text_para_gap: 14, red_light: 0, night_filter: 0, novel_translate: String::new(), up_model: String::new(), up_scale: 2, up_engine: String::new(), up_tile: 0, up_cache_mb: 1024, ocr_provider: "ocrspace".into(), ocr_key: String::new(), ocr_lang: "jpn".into(), reader_bg: "dark".into(), reader_buttons: true, reader_taps: true, reader_bubble_taps: true, reader_scroll: 0, reader_turn: "slide".into(), reader_gap: 0, reader_spread: false, text_theme: String::new(), text_theme_night: true, text_bold: false, text_letter: 0, text_pages: false, text_turn: "slide".into(), autoplay_next: true, next_popup_secs: 35, language: "system".into(), video_scale: "fit".into(), xray_source: "auto".into(), xray_lens_auto: false, renderer: "auto".into(), color_scheme: "system".into(), accent: String::new(), kaiwa_speak: false, kaiwa_live_model: String::new(), kaiwa_live_voice: String::new(), kaiwa_live_mic: "open".into(), kaiwa_live_headset: false, kaiwa_live_pause: 1200, shortcuts: vec![] },
+            general: General { autocards_url: "http://127.0.0.1:8765".into(), autocards_deck: "Mining Deck".into(), autocards_model: "Lapis".into(), autocards_f_sentence: "Sentence".into(), autocards_f_expression: "Expression".into(), autocards_f_picture: "Picture".into(), autocards_f_audio: "SentenceAudio".into(), autocards_prev: 0, autocards_next: 0, autocards_pad_ms: 250, ankiweb_user: String::new(), ankiweb_hkey: String::new(), disabled_plugins: Vec::new(), hwdec: "auto-copy".into(), buffer_seconds: 12, pick_mode: "ask".into(), preferred_height: 1080, volume: 100.0, thumbnails: true, skip_seconds: 90, ui_scale: 120, blur_unwatched: true, offline_mode: false, feedback_button: true, pad_sound: true, pad_orbs: true, pad_music: true, sound_nav: String::new(), sound_select: String::new(), sound_music: String::new(), sound_volume: 60, pad_light_accent: true, pad_light_color: String::new(), pad_light_brightness: 100, pad_touch_mouse: true, pad_touch_speed: 100, pad_deadzone: 30, pad_repeat: 90, pad_rumble: false, update_check: true, animated_bg: true, aurora_motion: false, mode: "video".into(), images_repo: String::new(), text_repo: String::new(), manga_lang: "en".into(), manga_mode: "rtl".into(), manga_saver: false, manga_source: "mangadex".into(), novel_source: String::new(), novel_size: 19, suwayomi_url: crate::suwayomi::DEFAULT_URL.into(), suwayomi_user: String::new(), suwayomi_pass: String::new(), suwayomi_managed: true, show_nsfw: false, suwayomi_repos: Vec::new(), manga_pins: vec![], karaoke_delays: vec![], karaoke: true, study_hints: true, banners: true, banner_quiet_from: 22, banner_quiet_to: 8, known_langs: vec![], study_lang: String::new(), study_in_player: false, study_quiz_rate: 50, study_quiz_cards: true, study_quiz_listen: true, study_wordmix: true, study_wordmix_rate: 50, study_wordmix_reading: true, study_mining: true, study_mining_max: 10, study_mascot_cues: true, learn_unlimited_hearts: false, study_volume: 100, kaiwa_ai: "auto".into(), kaiwa_ollama: String::new(), kaiwa_level: String::new(), kaiwa_name: String::new(), kaiwa_interests: String::new(), kaiwa_reading: false, kaiwa_romaji: false, kaiwa_translation: false, kaiwa_voice: false, kaiwa_check: true, kaiwa_autosend: true, kaiwa_handsfree: true, voice_input: "auto".into(), voice_model: "auto".into(), voice_output: "auto".into(), voice_local: String::new(), voice_pause: 0, voice_margin: 10, voice_mic: String::new(), pomo_focus: 25, pomo_short: 5, pomo_long: 15, pomo_rounds: 4, pomo_auto: false, pomo_tick: false, pomo_sound: true, karaoke_top: true, karaoke_delay: 0.0, karaoke_size: 100, karaoke_margin: 0, karaoke_color: String::new(), karaoke_font: String::new(), karaoke_bold: String::new(), karaoke_outline: -1, karaoke_shadow: -1, karaoke_unfilled: String::new(), karaoke_italic: String::new(), karaoke_underline: String::new(), karaoke_outline_color: String::new(), karaoke_back_color: String::new(), karaoke_scale_x: 0, karaoke_scale_y: 0, karaoke_spacing: -100, karaoke_align: 0, karaoke_margin_l: 0, karaoke_margin_r: 0, karaoke_border: String::new(), debug: false, reader_fit: "screen".into(), reader_zoom: 100, theme: String::new(), reader_font: 100, reader_upscale: false, reader_ocr: true, reader_translate: String::new(), manga_langs: vec!["en".into()], novel_langs: vec![], text_font: String::new(), text_line: 170, text_indent: 0, text_word: 0, text_align: "start".into(), text_bg: "app".into(), text_bg_color: "#fbf0d9".into(), text_fg: String::new(), text_width: 760, text_head_size: 135, text_head_color: String::new(), text_head_center: false, text_para_gap: 14, red_light: 0, night_filter: 0, novel_translate: String::new(), up_model: String::new(), up_scale: 2, up_engine: String::new(), up_tile: 0, up_cache_mb: 1024, ocr_provider: "ocrspace".into(), ocr_key: String::new(), ocr_lang: "jpn".into(), reader_bg: "dark".into(), reader_buttons: true, reader_taps: true, reader_bubble_taps: true, reader_scroll: 0, reader_turn: "slide".into(), reader_gap: 0, reader_spread: false, text_theme: String::new(), text_theme_night: true, text_bold: false, text_letter: 0, text_pages: false, text_turn: "slide".into(), autoplay_next: true, next_popup_secs: 35, autoplay_rule: String::new(), p2p_ok: false, language: "system".into(), video_scale: "fit".into(), xray_source: "auto".into(), xray_lens_auto: false, renderer: "auto".into(), color_scheme: "system".into(), accent: String::new(), kaiwa_speak: false, kaiwa_live_model: String::new(), kaiwa_live_voice: String::new(), kaiwa_live_mic: "open".into(), kaiwa_live_headset: false, kaiwa_live_pause: 1200, shortcuts: vec![] },
             debrid: Debrid { enabled: false, api_key: String::new() },
             metadata: Metadata { tmdb_key: String::new(), omdb_key: String::new(), tmdb_art: false },
             subtitles: Subtitles {
@@ -629,6 +637,8 @@ impl Default for Settings {
                 openai_base: "https://api.openai.com/v1".into(),
                 // playback starts this long after buffering at most; subtitles that come later are added then
                 max_wait_secs: 8,
+                strip_sdh: false,
+                auto_sync: false,
                 style: SubStyle::default(),
             },
             upscaling: Upscaling {
@@ -913,6 +923,8 @@ impl Settings {
                 text_turn: s(g, "text_turn", "slide"),
                 autoplay_next: b(g, "autoplay_next", true),
                 next_popup_secs: n(g, "next_popup_secs", 35.0) as u32,
+                autoplay_rule: s(g, "autoplay_rule", ""),
+                p2p_ok: b(g, "p2p_ok", false),
                 // "ui_language" replaced "language" (2026-10-31): the old default "en" was saved for everyone, so an old
                 // "en" now means "system" (follow the main language of Languages I know, then the system).
                 language: if g.get("ui_language").is_null() { match s(g, "language", "system").as_str() { "en" | "" => "system".into(), o => o.to_string() } } else { s(g, "ui_language", "system") },
@@ -942,6 +954,8 @@ impl Settings {
                 openai_base: s(sb, "openai_base", &d.subtitles.openai_base),
                 // 90 was the old default (the video waited up to 90 s for subtitles): now they are added when they come
                 max_wait_secs: match n(sb, "max_wait_secs", d.subtitles.max_wait_secs as f64) as u32 { 90 => d.subtitles.max_wait_secs, v => v },
+                strip_sdh: b(sb, "strip_sdh", d.subtitles.strip_sdh),
+                auto_sync: b(sb, "auto_sync", d.subtitles.auto_sync),
                 style: SubStyle {
                     font: s(st, "font", &ds.font),
                     size: n(st, "size", ds.size as f64) as u32,
@@ -1189,6 +1203,8 @@ impl Settings {
                 ("text_turn", self.general.text_turn.clone().into()),
                 ("autoplay_next", self.general.autoplay_next.into()),
                 ("next_popup_secs", self.general.next_popup_secs.into()),
+                ("autoplay_rule", self.general.autoplay_rule.clone().into()),
+                ("p2p_ok", self.general.p2p_ok.into()),
                 ("ui_language", self.general.language.clone().into()),
                 ("language", self.general.language.clone().into()),
                 ("video_scale", self.general.video_scale.clone().into()),
@@ -1216,6 +1232,8 @@ impl Settings {
                 ("openai_model", self.subtitles.openai_model.clone().into()),
                 ("openai_base", self.subtitles.openai_base.clone().into()),
                 ("max_wait_secs", self.subtitles.max_wait_secs.into()),
+                ("strip_sdh", self.subtitles.strip_sdh.into()),
+                ("auto_sync", self.subtitles.auto_sync.into()),
                 ("style", Json::obj(vec![
                     ("font", st.font.clone().into()),
                     ("size", st.size.into()),

@@ -122,9 +122,6 @@ Item {
             if (e.key === Qt.Key_Return || e.key === Qt.Key_Enter) {
                 if (ll.status === "done" || ll.answered) ll.next(); else ll.check()
                 e.accepted = true
-            } else if (e.key === Qt.Key_Escape) {
-                if (ll.status === "done") ll.next(); else quitPop.open()
-                e.accepted = true
             } else if (e.key === Qt.Key_Backspace && ll.chosen.length > 0) {
                 ll.untap(ll.chosen.length - 1); e.accepted = true
             } else if (e.key >= Qt.Key_0 && e.key <= Qt.Key_9 && ll.status === "question") {
@@ -137,19 +134,49 @@ Item {
         }
     }
 
+    // Esc (desktop) and Back (Android) leave the lesson from anywhere in it, even when a button has the focus;
+    // on the finish screen they continue, like Enter.
+    Shortcut {
+        sequences: ["Esc", "Back"]
+        enabled: ll.visible && ll.s !== null && ll.s !== undefined && !quitPop.opened
+        context: Qt.WindowShortcut
+        onActivated: { if (ll.status === "done") ll.next(); else quitPop.open() }
+    }
+
     // ---------- top: leave, progress, hearts ----------
     Item {
         id: topRow
         visible: ll.status !== "done"
         x: (parent.width - Math.min(900, parent.width - 32)) / 2
         width: Math.min(900, parent.width - 32); height: 64
-        FlatButton {
+        // Leave the lesson: a round button with an X drawn from two bars (plain rectangles, so it shows even where
+        // the vector icons do not draw), always outlined so it is seen without hovering it.
+        Rectangle {
             id: closeBtn
             anchors { left: parent.left; verticalCenter: parent.verticalCenter }
-            kind: "flatround"; glyph: "close"; iconSize: 22
-            implicitWidth: 40; implicitHeight: 40
-            ToolTip.visible: hovered; ToolTip.delay: 500; ToolTip.text: ll.tr("Leave the lesson") + " (Esc)"
-            onClicked: quitPop.open()
+            width: Theme.mobile ? 48 : 40; height: width; radius: width / 2
+            color: closeMa.pressed ? Theme.c.selected : (closeMa.containsMouse ? Theme.c.hover : "transparent")
+            border.width: 2; border.color: Theme.c.border
+            Repeater {
+                model: [45, -45]
+                Rectangle {
+                    required property var modelData
+                    anchors.centerIn: parent
+                    width: closeBtn.width * 0.45; height: 3; radius: 1.5
+                    rotation: modelData
+                    color: closeMa.containsMouse ? Theme.c.text : Theme.c.textDim
+                    antialiasing: true
+                }
+            }
+            MouseArea {
+                id: closeMa
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: quitPop.open()
+            }
+            ToolTip.visible: closeMa.containsMouse; ToolTip.delay: 500; ToolTip.text: ll.tr("Leave the lesson") + " (Esc)"
+            Accessible.role: Accessible.Button; Accessible.name: ll.tr("Leave the lesson")
         }
         Rectangle {
             id: bar

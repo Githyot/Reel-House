@@ -54,6 +54,8 @@ Column {
             onPicked: function(i) { sp.dlg.set("subtitles.target_lang", sp.langIds[i]) }
         }
         PrefSpin { title: Core.tr(Core.uiLang, "Longest wait after buffering"); subtitle: Core.tr(Core.uiLang, "Seconds. Playback starts without subtitles after this."); from: 0; to: 300; step: 5; value: sp.sb.max_wait_secs || 0; onMoved: function(v) { sp.dlg.set("subtitles.max_wait_secs", v) } }
+        PrefSwitch { title: Core.tr(Core.uiLang, "Remove notes for the hearing impaired"); subtitle: Core.tr(Core.uiLang, "Drops [music], (laughs) and NAME: labels from downloaded subtitles, so study cards stay clean"); checked: sp.sb.strip_sdh === true; onToggled: function(on) { sp.dlg.set("subtitles.strip_sdh", on) } }
+        PrefSwitch { title: Core.tr(Core.uiLang, "Sync downloaded subtitles with the speech"); subtitle: Core.tr(Core.uiLang, "About 10 s into each video the app listens to the voices and fixes the subtitle delay. Also in the player\u2019s subtitle menu."); checked: sp.sb.auto_sync === true; onToggled: function(on) { sp.dlg.set("subtitles.auto_sync", on) } }
     }
 
     // ---------- Translator ----------

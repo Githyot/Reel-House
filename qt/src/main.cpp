@@ -141,6 +141,34 @@ int main(int argc, char *argv[]) {
         QDir().mkpath(tmp);
         qputenv("TMPDIR", tmp.toUtf8());
     }
+#ifdef Q_OS_ANDROID
+    // Subtitles (and the karaoke lyrics, a second ASS track) are drawn by libass inside mpv-android's libmpv, which
+    // finds fonts through fontconfig. mpv hands libass a fonts.conf only from its config folder, and the player runs
+    // with config=no, so fontconfig fell back to a path of the build machine: no fonts at all, and every subtitle drawn
+    // by mpv stayed invisible. A fonts.conf of our own (the same one the mpv-android app writes) points it at the
+    // phone's fonts; fontconfig reads FONTCONFIG_FILE when libass starts, long after this.
+    if (!qEnvironmentVariableIsSet("FONTCONFIG_FILE")) {
+        const QString cache = QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + QStringLiteral("/fontconfig");
+        QDir().mkpath(cache);
+        const QString conf = appData + QStringLiteral("/fonts.conf");
+        const QString want = QStringLiteral(
+            "<?xml version=\"1.0\"?>\n<!DOCTYPE fontconfig SYSTEM \"fonts.dtd\">\n<fontconfig>\n"
+            "  <dir>/system/fonts</dir>\n  <dir>/product/fonts</dir>\n  <dir>/system/product/fonts</dir>\n"
+            "  <cachedir>%1</cachedir>\n"
+            "  <alias><family>serif</family><prefer><family>Noto Serif</family><family>Noto Serif CJK JP</family></prefer></alias>\n"
+            "  <alias><family>sans-serif</family><prefer><family>Roboto</family><family>Noto Sans</family><family>Noto Sans CJK JP</family></prefer></alias>\n"
+            "  <alias><family>Sans</family><prefer><family>Roboto</family><family>Noto Sans</family><family>Noto Sans CJK JP</family></prefer></alias>\n"
+            "  <alias><family>monospace</family><prefer><family>Droid Sans Mono</family><family>Cutive Mono</family></prefer></alias>\n"
+            "  <alias><family>Arial</family><accept><family>Roboto</family></accept></alias>\n"
+            "  <alias><family>Helvetica</family><accept><family>Roboto</family></accept></alias>\n"
+            "</fontconfig>\n").arg(cache.toHtmlEscaped());
+        QFile f(conf);
+        bool same = false;
+        if (f.open(QIODevice::ReadOnly)) { same = QString::fromUtf8(f.readAll()) == want; f.close(); }
+        if (!same && f.open(QIODevice::WriteOnly | QIODevice::Truncate)) { f.write(want.toUtf8()); f.close(); }
+        qputenv("FONTCONFIG_FILE", conf.toUtf8());
+    }
+#endif
     exeDir = appData;
 #elif !defined(Q_OS_WIN)
     // An installed copy (/opt/reelhouse from the .deb / .rpm, ReelHouse.app from the .dmg) sits in a folder the user

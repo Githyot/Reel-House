@@ -94,6 +94,34 @@ pub fn parse_cues(input: &str) -> Vec<Cue> {
     cues
 }
 
+/// Removes the notes for the hearing impaired from one cue: `[music]`, `(laughs)` and speaker labels such as
+/// `JOHN:` or `- [MAN]:`. None when nothing is left. Ported from NuvioMobile's SubtitleSdhFilter.kt
+/// (GPL-3.0, NuvioMedia and contributors), modified 2026-11: the regex crate has no look-around, so the checks
+/// the Kotlin patterns made with it are done in code, and a speaker label must be written in capitals.
+pub fn strip_sdh(text: &str) -> Option<String> {
+    use std::sync::OnceLock;
+    static RE: OnceLock<(regex::Regex, regex::Regex, regex::Regex)> = OnceLock::new();
+    let (speaker, brackets, parens) = RE.get_or_init(|| {
+        (
+            regex::Regex::new(r"(?m)^([ \t]*-[ \t]*)?(?:[A-Z0-9 ()'#.,]*[A-Z][A-Z0-9 ()'#.,]*|\[[^\]\r\n]*\]):([ \t]+|$)").unwrap(),
+            regex::Regex::new(r"\[[^\]]*\][ \t]*").unwrap(),
+            regex::Regex::new(r"\(([^)]*)\)[ \t]*|（([^）]*)）[ \t]*").unwrap(),
+        )
+    });
+    let t = speaker.replace_all(text, |c: &regex::Captures| c.get(1).map(|m| m.as_str()).unwrap_or("").to_string());
+    let t = brackets.replace_all(&t, "");
+    // only notes written in plain letters, and not a bare number such as "(2)"
+    let t = parens.replace_all(&t, |c: &regex::Captures| {
+        let inner = c.get(1).or_else(|| c.get(2)).map(|m| m.as_str()).unwrap_or("");
+        let note = inner.chars().all(|ch| ch.is_ascii_alphanumeric() || " '#.,\"\\-\r\n".contains(ch));
+        let number = inner.chars().all(|ch| ch.is_ascii_digit());
+        if note && !number { String::new() } else { c[0].to_string() }
+    });
+    let lines: Vec<&str> = t.lines().filter(|l| l.chars().any(|ch| !ch.is_whitespace() && ch != '-')).map(|l| l.trim_end()).collect();
+    let out = lines.join("\n");
+    if out.trim().is_empty() { None } else { Some(out) }
+}
+
 pub fn cues_to_srt(cues: &[Cue]) -> String {
     cues.iter().enumerate().map(|(i, c)| format!("{}\n{} --> {}\n{}\n", i + 1, c.start, c.end, c.text)).collect::<Vec<_>>().join("\n")
 }
@@ -144,6 +172,8 @@ pub struct Wanted<'a> {
     pub candidates: &'a [SubCand],
     pub target: &'a str,
     pub preferred: &'a [String],
+    /// Remove the notes for the hearing impaired (see `strip_sdh`).
+    pub strip_sdh: bool,
 }
 
 /// Produces a local `.srt` in the target language, or None when no subtitle exists.
@@ -182,7 +212,7 @@ fn prepare_one(
     let target = lang_base(wanted.target);
     let src_lang = lang_base(&cand.lang);
     fs::create_dir_all(cache_dir).map_err(|e| e.to_string())?;
-    let key = fnv_hex(&format!("{}|{}", cand.url, if needs { target.as_str() } else { "orig" }));
+    let key = fnv_hex(&format!("{}|{}{}", cand.url, if needs { target.as_str() } else { "orig" }, if wanted.strip_sdh { "|nosdh" } else { "" }));
 
     let (file_name, lang) = if needs && translator.is_some() {
         (format!("{}.{}.srt", key, target), target.clone())
@@ -203,7 +233,11 @@ fn prepare_one(
     if !r.ok() {
         return Err(format!("The subtitle download failed ({}).", r.status));
     }
-    let cues = parse_cues(&decode(&r.body));
+    let mut cues = parse_cues(&decode(&r.body));
+    if wanted.strip_sdh {
+        // before translating: fewer lines to send, and the notes are not translated for nothing
+        cues = cues.into_iter().filter_map(|c| strip_sdh(&c.text).map(|text| Cue { text, ..c })).collect();
+    }
     if cues.is_empty() {
         return Err("The subtitle file had no readable lines.".to_string());
     }
@@ -247,6 +281,20 @@ pub fn fetch_srt(http: &dyn Http, url: &str, cache_dir: &Path) -> Result<PathBuf
 mod tests {
     use super::*;
     use crate::http::fake::Fake;
+
+    #[test]
+    fn strips_hearing_impaired_notes() {
+        assert_eq!(strip_sdh("[MUSIC PLAYING]").as_deref(), None);
+        assert_eq!(strip_sdh("(laughs) That's funny.").as_deref(), Some("That's funny."));
+        assert_eq!(strip_sdh("JOHN: Where are you?").as_deref(), Some("Where are you?"));
+        assert_eq!(strip_sdh("- [MAN]: Run!\n- (gasps) Okay.").as_deref(), Some("- Run!\n- Okay."));
+        // ordinary text stays
+        assert_eq!(strip_sdh("Meet me at 10:30, okay?").as_deref(), Some("Meet me at 10:30, okay?"));
+        assert_eq!(strip_sdh("Note: this is fine").as_deref(), Some("Note: this is fine"));
+        assert_eq!(strip_sdh("Chapter (2) begins").as_deref(), Some("Chapter (2) begins"));
+        assert_eq!(strip_sdh("お元気ですか（笑）").as_deref(), Some("お元気ですか（笑）"));
+        assert_eq!(strip_sdh("（laughs）こんにちは").as_deref(), Some("こんにちは"));
+    }
 
     #[test]
     fn srt_time_survives_odd_stamps() {
@@ -312,7 +360,7 @@ mod tests {
         let http = Fake::new().route("GET http://x/sub.srt", 200, "1\n00:00:01,000 --> 00:00:02,000\nHello there\n\n");
         let c = vec![cand("eng", "http://x/sub.srt")];
         let pref = vec!["en".to_string()];
-        let w = Wanted { candidates: &c, target: "pt-BR", preferred: &pref };
+        let w = Wanted { candidates: &c, target: "pt-BR", preferred: &pref, strip_sdh: false };
         let first = prepare(&http, &w, Some(&Prefix), &dir, &|_| {}).unwrap().unwrap();
         assert!(first.translated && !first.cached);
         assert!(fs::read_to_string(&first.path).unwrap().contains("[pt] Hello there"));
@@ -328,7 +376,7 @@ mod tests {
         let http = Fake::new().route("GET http://x/p.srt", 200, "1\n00:00:01,000 --> 00:00:02,000\nOlá\n\n");
         let c = vec![cand("por", "http://x/p.srt"), cand("eng", "http://x/e.srt")];
         let pref = vec!["en".to_string()];
-        let w = Wanted { candidates: &c, target: "pt", preferred: &pref };
+        let w = Wanted { candidates: &c, target: "pt", preferred: &pref, strip_sdh: false };
         let r = prepare(&http, &w, Some(&Prefix), &dir, &|_| {}).unwrap().unwrap();
         assert!(!r.translated);
         assert!(fs::read_to_string(&r.path).unwrap().contains("Olá"));
@@ -342,7 +390,7 @@ mod tests {
         let http = Fake::new().route("GET http://x/e.srt", 200, "1\n00:00:01,000 --> 00:00:02,000\nHi\n\n");
         let c = vec![cand("eng", "http://x/e.srt")];
         let pref = vec!["en".to_string()];
-        let w = Wanted { candidates: &c, target: "pt", preferred: &pref };
+        let w = Wanted { candidates: &c, target: "pt", preferred: &pref, strip_sdh: false };
         let r = prepare(&http, &w, None, &dir, &|_| {}).unwrap().unwrap();
         assert!(r.untranslated && r.lang == "en");
         let _ = fs::remove_dir_all(&dir);
@@ -354,9 +402,9 @@ mod tests {
         let http = Fake::new().route("GET http://x/e.srt", 404, "");
         let c = vec![cand("eng", "http://x/e.srt")];
         let pref = vec!["en".to_string()];
-        let w = Wanted { candidates: &c, target: "pt", preferred: &pref };
+        let w = Wanted { candidates: &c, target: "pt", preferred: &pref, strip_sdh: false };
         assert!(prepare(&http, &w, Some(&Prefix), &dir, &|_| {}).unwrap_err().contains("404"));
-        assert!(prepare(&http, &Wanted { candidates: &[], target: "pt", preferred: &pref }, None, &dir, &|_| {}).unwrap().is_none());
+        assert!(prepare(&http, &Wanted { candidates: &[], target: "pt", preferred: &pref, strip_sdh: false }, None, &dir, &|_| {}).unwrap().is_none());
         let _ = fs::remove_dir_all(&dir);
     }
 }

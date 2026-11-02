@@ -267,6 +267,26 @@ Popup {
                     value: ((sm.p.subDelay || 0) >= 0 ? "+" : "") + (sm.p.subDelay || 0).toFixed(1) + " s"
                     onStep: function(dir) { Core.cmd({cmd: "sub_delay", value: dir === 0 ? 0 : (sm.p.subDelay || 0) + dir * 0.1}) }
                 }
+                // finds the delay by itself from the speech of the video (crate::subsync)
+                OsdButton {
+                    kind: "tonal"
+                    glyph: "refresh"
+                    enabled: sm.p.subSyncBusy !== true
+                    text: sm.p.subSyncBusy === true ? Core.tr(Core.uiLang, "Syncing…") : Core.tr(Core.uiLang, "Sync with the speech")
+                    implicitHeight: 32
+                    ToolTip.visible: hovered
+                    ToolTip.text: Core.tr(Core.uiLang, "Listens to the next two minutes of the video and moves the subtitle to match the voices")
+                    onClicked: Core.cmd({cmd: "sub_sync"})
+                }
+                Text {
+                    visible: text !== ""
+                    width: parent.width
+                    wrapMode: Text.Wrap
+                    text: sm.p.subSyncNote ? Core.tr(Core.uiLang, sm.p.subSyncNote) : ""
+                    color: "#b3ffffff"
+                    font.pixelSize: 12
+                    font.family: Theme.type.family
+                }
             }
             Column {
                 width: parent.width
@@ -387,14 +407,18 @@ Popup {
             property int lang: 0
             readonly property var langIds: ["en", "pt", "es", "fr", "de", "it", "nl", "sv", "pl", "ru", "tr", "ar", "hi", "id", "vi", "th", "ja", "ko", "zh"]
             readonly property var langNames: ["English", "Português", "Español", "Français", "Deutsch", "Italiano", "Nederlands", "Svenska", "Polski", "Русский", "Türkçe", "العربية", "हिन्दी", "Bahasa Indonesia", "Tiếng Việt", "ไทย", "日本語", "한국어", "中文"]
-            // Every subtitle that can be translated: what the addons offer, then files already loaded.
+            // Every subtitle that can be translated: the tracks built into the video (the one on screen first), what
+            // the addons offer, then files already loaded.
             readonly property var sources: {
                 var out = [], counts = {}
+                sm.tracks.filter(function(t) { return !t.external }).sort(function(a, b) { return (b.selected ? 1 : 0) - (a.selected ? 1 : 0) }).forEach(function(t) {
+                    out.push({label: (t.title !== "" ? t.title : t.langName) + " · " + Core.tr(Core.uiLang, "built into the video"), index: 0, file: "", lang: t.lang, track: t.id})
+                })
                 sm.cands.forEach(function(c) {
                     counts[c.langKey] = (counts[c.langKey] || 0) + 1
-                    out.push({label: c.langName + " · " + c.addon + " #" + counts[c.langKey], index: c.index, file: "", lang: ""})
+                    out.push({label: c.langName + " · " + c.addon + " #" + counts[c.langKey], index: c.index, file: "", lang: "", track: 0})
                 })
-                sm.tracks.filter(function(t) { return t.external && t.file !== "" }).forEach(function(t) { out.push({label: t.title !== "" ? t.title : t.langName, index: 0, file: t.file, lang: t.lang}) })
+                sm.tracks.filter(function(t) { return t.external && t.file !== "" }).forEach(function(t) { out.push({label: t.title !== "" ? t.title : t.langName, index: 0, file: t.file, lang: t.lang, track: 0}) })
                 return out
             }
             readonly property bool running: sm.p.translating !== null && sm.p.translating !== undefined
@@ -459,7 +483,7 @@ Popup {
                     text: Core.tr(Core.uiLang, "Translate")
                     onClicked: {
                         var s = transPage.sources[transPage.src]
-                        if (s) Core.cmd({cmd: "translate_subtitle", index: s.index, file: s.file, lang: s.lang, target: transPage.langIds[transPage.lang]})
+                        if (s) Core.cmd({cmd: "translate_subtitle", index: s.index, file: s.file, lang: s.lang, track: s.track || 0, target: transPage.langIds[transPage.lang]})
                     }
                 }
             }

@@ -188,7 +188,8 @@ Item {
             radius: Math.max(0, rp.pageRadius - 1)
             profile: rp.bs.profileDir || ""
             language: Core.uiLang || "en"
-            // on Android the page is a native view over the app: hidden while a side sheet is open over it
+            // on Android the page is a native view over the app: hidden while a side sheet is open over it (and, in WebPane,
+            // while any popup such as the mode menu overlaps it)
             covered: rp.sheet !== ""
             onTabsChanged: if (rp.started) saveTabs.restart()
             onVisited: function(url, title) { Core.cmd({cmd: "browser_visit", url: url, title: title, kind: "page"}) }

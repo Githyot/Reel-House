@@ -308,6 +308,35 @@ QString CoreBridge::localPath(const QString &url) {
     return u.isLocalFile() ? u.toLocalFile() : url;
 }
 
+QString CoreBridge::importFile(const QString &url, const QString &dir) {
+    const QUrl u(url);
+    if (u.isLocalFile()) return u.toLocalFile();
+    if (!url.startsWith(QLatin1String("content:"))) return url;
+    QFile in(url);
+    if (!in.open(QIODevice::ReadOnly)) { qWarning() << "[import] could not open" << url << in.errorString(); return QString(); }
+    const QString base = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/" + dir;
+    QDir().mkpath(base);
+    // the document's own name (Android gives its display name), else one made from the address
+    QString name = QFileInfo(url).fileName();
+    static const QString bad = QStringLiteral("/\\:*?\"<>|");
+    for (QChar &ch : name) if (bad.contains(ch) || ch.unicode() < 32) ch = '_';
+    if (name.isEmpty() || name.startsWith('.') || name.contains(QLatin1String("%2F")))
+        name = "file-" + QString::fromLatin1(QCryptographicHash::hash(url.toUtf8(), QCryptographicHash::Md5).toHex().left(12));
+    const QString out = base + "/" + name;
+    if (QFileInfo(out).size() > 0 && QFileInfo(out).size() == in.size()) return out;
+    QFile o(out + ".part");
+    if (!o.open(QIODevice::WriteOnly | QIODevice::Truncate)) { qWarning() << "[import] could not write" << out; return QString(); }
+    QByteArray buf;
+    while (!(buf = in.read(1 << 20)).isEmpty()) {
+        if (o.write(buf) != buf.size()) { o.remove(); qWarning() << "[import] copy failed" << out; return QString(); }
+    }
+    o.close();
+    QFile::remove(out);
+    if (!QFile::rename(out + ".part", out)) return QString();
+    qInfo().noquote() << "[import]" << url << "->" << out;
+    return out;
+}
+
 QVariantMap CoreBridge::cmd(const QVariantMap &c) {
     if (!m_b) return {{"ok", false}};
     const QByteArray j = QJsonDocument(QJsonObject::fromVariantMap(c)).toJson(QJsonDocument::Compact);

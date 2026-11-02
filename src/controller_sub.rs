@@ -11,7 +11,17 @@ pub enum SubSource {
     Candidate(usize),
     /// A subtitle file already loaded in the player: its path and language.
     File(String, String),
+    /// A subtitle track built into the video (mpv's track id): read out of the MKV and translated.
+    Embedded(i64),
 }
+
+/// Where a built-in subtitle track is: the video's address and how to find the track inside it.
+struct EmbeddedAt {
+    url: String,
+    want: crate::mkvsubs::Want,
+    codec: String,
+}
+
 
 #[derive(Clone, Debug)]
 pub struct Forced {
@@ -98,11 +108,12 @@ pub fn prepare_known(
     source_langs: &[String],
     translator: Option<&dyn translate::Translator>,
     cache: &Path,
+    strip_sdh: bool,
     status: &(dyn Fn(String) + Sync),
 ) -> Result<Option<subtitles::SubFile>, String> {
     let mut last: Result<Option<subtitles::SubFile>, String> = Ok(None);
     for step in sub_plan(known, cands, fallback_target, source_langs) {
-        let wanted = Wanted { candidates: &step.cands, target: &step.target, preferred: &step.preferred };
+        let wanted = Wanted { candidates: &step.cands, target: &step.target, preferred: &step.preferred, strip_sdh };
         match subtitles::prepare(http, &wanted, translator, cache, status) {
             Ok(Some(f)) => return Ok(Some(f)),
             // a known language whose files are all broken: the next language (or the translation) is tried
@@ -137,6 +148,46 @@ pub fn pick_embedded(known: &[String], tracks: &[(i64, String)], cands: Option<&
         Some(a) if a < rank => EmbeddedPick::Skip,
         _ => EmbeddedPick::Use(id),
     }
+}
+
+/// Reads a built-in subtitle track out of the video into an SRT file in `cache` (kept: translating the same
+/// track into another language does not read the video again). `progress(0..1)` follows the bytes read.
+fn read_embedded(e: &EmbeddedAt, cache: &Path, cancel: &AtomicBool, progress: &dyn Fn(f32)) -> Result<PathBuf, String> {
+    if crate::mkvsubs::is_picture_codec(&e.codec) {
+        return Err("This subtitle track is made of pictures (PGS/VobSub), not text, so it cannot be translated. Pick a text subtitle or one from the addons.".to_string());
+    }
+    let key = format!("{}|{:?}|{}", e.url, e.want.src_id, e.want.nth);
+    let out = cache.join(format!("embedded-{}.srt", util::fnv_hex(&key)));
+    if out.exists() {
+        return Ok(out);
+    }
+    let (mut reader, total): (Box<dyn std::io::Read>, Option<u64>) = if e.url.starts_with("http://") || e.url.starts_with("https://") {
+        let resp = ureq::AgentBuilder::new()
+            .timeout_connect(std::time::Duration::from_secs(15))
+            .timeout_read(std::time::Duration::from_secs(120))
+            .build()
+            .get(&e.url)
+            .call()
+            .map_err(|x| format!("Could not open the video to read its subtitles ({}).", x))?;
+        let total = resp.header("Content-Length").and_then(|v| v.parse::<u64>().ok());
+        (Box::new(std::io::BufReader::with_capacity(1 << 20, resp.into_reader())), total)
+    } else {
+        let p = e.url.strip_prefix("file://").unwrap_or(&e.url);
+        let f = std::fs::File::open(p).map_err(|x| format!("Could not open the video to read its subtitles ({}).", x))?;
+        let total = f.metadata().ok().map(|m| m.len());
+        (Box::new(std::io::BufReader::with_capacity(1 << 20, f)), total)
+    };
+    let t0 = std::time::Instant::now();
+    let mut report = |bytes: u64| {
+        if let Some(t) = total.filter(|t| *t > 0) {
+            progress((bytes as f32 / t as f32).min(1.0));
+        }
+    };
+    let (track, cues) = crate::mkvsubs::extract(&mut *reader, &e.want, &mut report, cancel)?;
+    crate::debug::log("subs", &format!("built-in track {} ({}, {}) read: {} line(s) in {} ms", track.number, track.codec, track.lang, cues.len(), t0.elapsed().as_millis()));
+    std::fs::create_dir_all(cache).map_err(|x| x.to_string())?;
+    std::fs::write(&out, subtitles::cues_to_srt(&cues)).map_err(|x| x.to_string())?;
+    Ok(out)
 }
 
 fn save_forced(dir: &Path, list: &[Forced]) {
@@ -179,6 +230,18 @@ impl Core {
                 None => return,
             },
             SubSource::File(_, lang) => (None, lang.clone()),
+            SubSource::Embedded(id) => (None, self.mpv.as_ref().and_then(|m| m.tracks("sub").into_iter().find(|t| t.id == *id)).map(|t| t.lang).unwrap_or_default()),
+        };
+        let embedded = match &source {
+            SubSource::Embedded(id) => match self.embedded_at(*id) {
+                Some(e) => Some(e),
+                None => {
+                    self.translate_note = Some((false, "The subtitle track was not found in the player.".to_string()));
+                    self.events.push(Event::Session);
+                    return;
+                }
+            },
+            _ => None,
         };
         let cache = self.data_dir.join("subtitles");
         let out_dir = self.data_dir.join("forced");
@@ -195,9 +258,15 @@ impl Core {
         self.translate_note = None;
         self.spawn(move |tx, http| {
             let r = (|| -> Result<Forced, String> {
+                // reading a built-in track takes the first part of the progress bar
+                let base = if embedded.is_some() { 30.0 } else { 0.0 };
                 let path = match (&source, &url) {
                     (SubSource::Candidate(_), Some(u)) => subtitles::fetch_srt(&*http, u, &cache)?,
                     (SubSource::File(p, _), _) => PathBuf::from(p),
+                    (SubSource::Embedded(_), _) => match &embedded {
+                        Some(e) => read_embedded(e, &cache, &cancel, &|p| send(tx, Msg::ForcedProgress(((p * base) as u8).min(29))))?,
+                        None => return Err("Nothing to translate.".to_string()),
+                    },
                     _ => return Err("Nothing to translate.".to_string()),
                 };
                 let bytes = std::fs::read(&path).map_err(|e| format!("Could not read the subtitle: {}", e))?;
@@ -209,7 +278,7 @@ impl Core {
                 let texts: Vec<String> = cues.iter().map(|c| c.text.clone()).collect();
                 let last = std::sync::atomic::AtomicU32::new(0);
                 let progress = |p: f32| {
-                    let pct = ((p * 100.0) as u32).min(99);
+                    let pct = ((base + p * (100.0 - base)) as u32).min(99);
                     if pct > last.swap(pct, std::sync::atomic::Ordering::SeqCst) {
                         send(tx, Msg::ForcedProgress(pct as u8));
                     }
@@ -226,6 +295,29 @@ impl Core {
             })();
             send(tx, Msg::Forced(token, r));
         });
+    }
+
+    /// The address of the video playing and how to find the built-in subtitle track `id` in it.
+    fn embedded_at(&self, id: i64) -> Option<EmbeddedAt> {
+        let m = self.mpv.as_ref()?;
+        let count = m.get_i64("track-list/count").unwrap_or(0);
+        let mut nth = 0usize;
+        for i in 0..count {
+            if m.get_str(&format!("track-list/{}/type", i)).as_deref() != Some("sub") {
+                continue;
+            }
+            if m.get_flag(&format!("track-list/{}/external", i)).unwrap_or(false) {
+                continue;
+            }
+            if m.get_i64(&format!("track-list/{}/id", i)) == Some(id) {
+                let src_id = m.get_i64(&format!("track-list/{}/src-id", i)).filter(|x| *x > 0).map(|x| x as u64);
+                let codec = m.get_str(&format!("track-list/{}/codec", i)).unwrap_or_default();
+                let url = m.get_str("stream-open-filename").filter(|x| !x.is_empty()).or_else(|| m.get_str("path"))?;
+                return Some(EmbeddedAt { url, want: crate::mkvsubs::Want { src_id, nth }, codec });
+            }
+            nth += 1;
+        }
+        None
     }
 
     /// Stops the translation that is running (the Cancel button).

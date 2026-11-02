@@ -110,6 +110,9 @@ public:
     Q_INVOKABLE void readPage(const QString &url);
     // A file path from a file: address (the path itself when it is already one).
     Q_INVOKABLE QString localPath(const QString &url);
+    // A file picked in a dialog as a path the core and mpv can open: a local file as it is; an Android content://
+    // document is copied into <app data>/<dir>/ first (neither can read those). Empty when the copy failed.
+    Q_INVOKABLE QString importFile(const QString &url, const QString &dir);
     // The in-app browser (Android System WebView): its cookies for a page and its User-Agent, kept by the core after
     // a site's bot check so the text sources can read it (empty where there is no such browser).
     Q_INVOKABLE QString webCookies(const QString &url);

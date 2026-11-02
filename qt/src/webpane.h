@@ -221,6 +221,7 @@ private:
     int dlNum(const QString &key) const;
     void syncShown();
     void checkScale();
+    void checkOverlay();   // Android: a popup open over the page hides the native WebView
     void sendKey(QKeyEvent *e, bool down);
     void sendMouse(QMouseEvent *e, bool press, bool release);
     uint modifiers(Qt::KeyboardModifiers m, Qt::MouseButtons b) const;
@@ -249,6 +250,8 @@ private:
     Qt::MouseButton m_clickButton = Qt::NoButton;
     int m_clicks = 0;
     QPointer<QQuickWindow> m_window;
+    QPointer<QQuickItem> m_overlay;   // the window's Qt Quick Controls overlay, where popups are drawn
+    bool m_overlaid = false;          // a popup is open over this pane (Android: the WebView steps aside)
     QList<QMetaObject::Connection> m_windowConns;
     // downloads: the latest state of each (for the throttled progress), keyed by Chromium's id
     QHash<int, QVariantMap> m_dl;
