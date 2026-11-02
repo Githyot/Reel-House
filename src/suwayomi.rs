@@ -13,13 +13,20 @@ pub struct Server {
     pub base: String,
     pub user: String,
     pub pass: String,
+    /// Set on Android: the app's own extension host (src/exthost.rs) instead of a Suwayomi server.
+    pub host: Option<crate::exthost::Host>,
 }
 
 impl Server {
     pub fn new(base: &str, user: &str, pass: &str) -> Server {
         let b = base.trim().trim_end_matches('/');
         let b = if b.is_empty() { DEFAULT_URL.to_string() } else if b.contains("://") { b.to_string() } else { format!("http://{}", b) };
-        Server { base: b, user: user.to_string(), pass: pass.to_string() }
+        Server { base: b, user: user.to_string(), pass: pass.to_string(), host: None }
+    }
+
+    /// The extension host of the Android app on 127.0.0.1:`port`.
+    pub fn local_host(port: u16, repos: Vec<String>, dir: std::path::PathBuf) -> Server {
+        Server { base: format!("http://127.0.0.1:{}", port), host: Some(crate::exthost::Host { repos, dir }), ..Default::default() }
     }
 
     /// A path of the server ("/api/v1/manga/3/thumbnail") as a full address.
@@ -89,6 +96,9 @@ fn gql_id(http: &dyn Http, srv: &Server, make: impl Fn(&str) -> String, id: &str
 }
 
 pub fn sources(http: &dyn Http, srv: &Server) -> Result<Vec<Source>, String> {
+    if srv.host.is_some() {
+        return crate::exthost::sources(http, srv);
+    }
     let j = gql(http, srv, "query { sources { nodes { id name lang iconUrl } } }").or_else(|_| gql(http, srv, "query { sources { nodes { id name lang } } }"))?;
     let mut out: Vec<Source> = j
         .path("sources.nodes")
@@ -140,6 +150,10 @@ pub fn repo_label(url: &str) -> String {
 
 /// Gives the server the repositories (replacing its list).
 pub fn set_repos(http: &dyn Http, srv: &Server, repos: &[String]) -> Result<(), String> {
+    if srv.host.is_some() {
+        // the host is given the list with every call (`Server::local_host`)
+        return Ok(());
+    }
     let list = repos.iter().map(|r| quote(r)).collect::<Vec<_>>().join(", ");
     gql(http, srv, &format!("mutation {{ setSettings(input: {{ settings: {{ extensionRepos: [{}] }} }}) {{ settings {{ extensionRepos }} }} }}", list)).map(|_| ())
 }
@@ -159,6 +173,9 @@ pub struct Extension {
 
 /// What the server's repositories offer (the server reads them now).
 pub fn extensions(http: &dyn Http, srv: &Server) -> Result<Vec<Extension>, String> {
+    if let Some(h) = &srv.host {
+        return crate::exthost::extensions(http, srv, h);
+    }
     // With the icon and the 18+ mark; a server that does not know those fields gets the short question.
     let j = gql(http, srv, "mutation { fetchExtensions(input: {}) { extensions { pkgName name lang isInstalled hasUpdate isNsfw iconUrl } } }").or_else(|_| gql(http, srv, "mutation { fetchExtensions(input: {}) { extensions { pkgName name lang isInstalled hasUpdate } } }"))?;
     Ok(j.path("fetchExtensions.extensions")
@@ -188,10 +205,16 @@ pub fn looks_adult(name: &str) -> bool {
 }
 
 pub fn install(http: &dyn Http, srv: &Server, pkg: &str) -> Result<(), String> {
+    if let Some(h) = &srv.host {
+        return crate::exthost::install(http, srv, h, pkg);
+    }
     gql(http, srv, &format!("mutation {{ updateExtension(input: {{ id: {}, patch: {{ install: true }} }}) {{ extension {{ pkgName isInstalled }} }} }}", quote(pkg))).map(|_| ())
 }
 
 pub fn uninstall(http: &dyn Http, srv: &Server, pkg: &str) -> Result<(), String> {
+    if srv.host.is_some() {
+        return crate::exthost::uninstall(http, srv, pkg);
+    }
     gql(http, srv, &format!("mutation {{ updateExtension(input: {{ id: {}, patch: {{ uninstall: true }} }}) {{ extension {{ pkgName isInstalled }} }} }}", quote(pkg))).map(|_| ())
 }
 
@@ -261,6 +284,9 @@ pub enum Kind {
 
 /// A page (1 based) of what a source lists.
 pub fn browse(http: &dyn Http, srv: &Server, source: &str, kind: Kind, page: usize, query: &str) -> Result<(Vec<Series>, bool), String> {
+    if srv.host.is_some() {
+        return crate::exthost::browse(http, srv, source, kind, page, query);
+    }
     let t = match kind {
         Kind::Popular => "POPULAR",
         Kind::Latest => "LATEST",
@@ -279,6 +305,9 @@ pub fn browse(http: &dyn Http, srv: &Server, source: &str, kind: Kind, page: usi
 
 /// Details of a series, read from its source.
 pub fn series(http: &dyn Http, srv: &Server, id: &str) -> Result<Series, String> {
+    if srv.host.is_some() {
+        return crate::exthost::series(http, srv, id);
+    }
     let j = gql(http, srv, &format!("mutation {{ fetchManga(input: {{ id: {} }}) {{ manga {{ {} }} }} }}", raw(id), MANGA_FIELDS))?;
     parse_manga(srv, j.path("fetchManga.manga")).ok_or_else(|| "The server did not know this title.".to_string())
 }
@@ -328,6 +357,9 @@ pub fn parse_chapter(c: &Json) -> Option<Chapter> {
 
 /// The chapters of a series, oldest first.
 pub fn chapters(http: &dyn Http, srv: &Server, manga: &str) -> Result<Vec<Chapter>, String> {
+    if srv.host.is_some() {
+        return crate::exthost::chapters(http, srv, manga);
+    }
     let j = gql(http, srv, &format!("mutation {{ fetchChapters(input: {{ mangaId: {} }}) {{ chapters {{ id name chapterNumber uploadDate scanlator sourceOrder pageCount }} }} }}", raw(manga)))?;
     let mut list: Vec<(i64, Chapter)> = j.path("fetchChapters.chapters").items().iter().filter_map(|c| parse_chapter(c).map(|ch| (c.get("sourceOrder").as_i64().unwrap_or(0), ch))).collect();
     // The server numbers them from the newest (0) to the oldest.
@@ -341,7 +373,7 @@ pub fn rebase(srv: &Server, url: &str) -> String {
     for pre in ["http://127.0.0.1:", "http://localhost:"] {
         if let Some(rest) = url.strip_prefix(pre) {
             if let Some(i) = rest.find('/') {
-                if rest[i..].starts_with("/api/") {
+                if rest[i..].starts_with("/api/") || rest[i..].starts_with("/image?") {
                     return srv.url(&rest[i..]);
                 }
             }
@@ -352,6 +384,9 @@ pub fn rebase(srv: &Server, url: &str) -> String {
 
 /// The addresses of the pictures of a chapter.
 pub fn pages(http: &dyn Http, srv: &Server, chapter: &str) -> Result<Vec<String>, String> {
+    if srv.host.is_some() {
+        return crate::exthost::pages(http, srv, chapter);
+    }
     let j = gql(http, srv, &format!("mutation {{ fetchChapterPages(input: {{ chapterId: {} }}) {{ pages }} }}", raw(chapter)))?;
     let p: Vec<String> = j.path("fetchChapterPages.pages").strings().iter().map(|p| srv.url(p)).collect();
     if p.is_empty() {

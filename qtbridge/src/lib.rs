@@ -2192,6 +2192,8 @@ fn run_cmd(b: &Bridge, j: &Json) -> Json {
                     }
                 }
             }
+            // Android: the app's own extension host listens (docs/android-extensions.md)
+            "ext_host" => c.ext_host_up(j.get("port").as_u64().unwrap_or(0) as u16, &j.get("dir").str()),
             // the cookies the in-app browser got after a site's bot check, for the text sources (sitepass.rs)
             "set_site_pass" => {
                 reelhouse::sitepass::set(&j.get("url").str(), &j.get("cookie").str(), &j.get("ua").str());

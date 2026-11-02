@@ -20,6 +20,7 @@
 #include <QStandardPaths>
 #include <QRectF>
 #include <cstring>
+#include <thread>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QWheelEvent>
@@ -38,6 +39,7 @@
 #include <cmath>
 #ifdef Q_OS_ANDROID
 #include <QJniObject>
+#include <QJniEnvironment>
 #include <QCoreApplication>
 #include <QtCore/qcoreapplication_platform.h>
 #endif
@@ -84,6 +86,21 @@ CoreBridge::CoreBridge(QObject *parent) : QObject(parent) {
         QTimer::singleShot(0, this, [this] { m_study = fetch("study"); emit studyChanged(); });
         m_profiles = fetch("profiles");
         cmd({{"cmd", "load_home"}});
+#ifdef Q_OS_ANDROID
+        // The Images mode's extensions run inside the app on Android (docs/android-extensions.md): the Kotlin host
+        // loads the installed ones and listens on 127.0.0.1, off the main thread since loading takes a moment.
+        std::thread([this] {
+            const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/extensions";
+            QDir().mkpath(dir);
+            QJniObject ctx = QNativeInterface::QAndroidApplication::context();
+            const jint port = QJniObject::callStaticMethod<jint>("org/reelhouse/ext/ExtensionHost", "start", "(Landroid/content/Context;Ljava/lang/String;)I",
+                                                                 ctx.object(), QJniObject::fromString(dir).object<jstring>());
+            QJniEnvironment env;
+            if (env.checkAndClearExceptions()) qWarning() << "extension host: Java exception while starting";
+            qInfo() << "extension host port" << port;
+            QMetaObject::invokeMethod(this, [this, port, dir] { cmd({{"cmd", "ext_host"}, {"port", int(port)}, {"dir", dir}}); }, Qt::QueuedConnection);
+        }).detach();
+#endif
         // Testing aid: REELHOUSE_TEST_PLAY=<file or address> plays it a moment after start.
         const QString testPlay = qEnvironmentVariable("REELHOUSE_TEST_PLAY");
         if (!testPlay.isEmpty())
