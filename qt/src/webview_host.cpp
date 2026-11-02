@@ -97,6 +97,22 @@ QUrl toUrl(const QString &s) { return s.isEmpty() ? QUrl(QStringLiteral("about:b
 
 }  // namespace
 
+// Google Lens (and the image search it falls back to) answers a phone's browser with a "Download app" page instead of
+// taking the picture: those pages get a desktop Chrome's name, the others keep the WebView's own.
+static void uaFor(QQuickItem *it, const QString &url) {
+    static const QString desktop = QStringLiteral(
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36");
+    const bool lens = url.contains(QLatin1String("lens.google.")) || url.contains(QLatin1String("/searchbyimage"))
+        || url.contains(QLatin1String("images.google.")) || url.contains(QLatin1String("google.com/imghp"));
+    const QString cur = it->property("httpUserAgent").toString();
+    if (lens && cur != desktop) {
+        it->setProperty("mobileUa", cur);
+        it->setProperty("httpUserAgent", desktop);
+    } else if (!lens && cur == desktop) {
+        it->setProperty("httpUserAgent", it->property("mobileUa").toString());
+    }
+}
+
 bool probe(QString &info) { info.clear(); return true; }
 QString version() { return QStringLiteral("Android System WebView"); }
 void configure(const QString &, const QString &) {}
@@ -129,7 +145,10 @@ int openTab(View *view, const QString &url, bool hidden) {
     t.view = view;
     t.item = it;
     g_tabs.insert(id, t);
-    if (!url.isEmpty()) it->setProperty("url", toUrl(url));
+    if (!url.isEmpty()) {
+        uaFor(it, url);
+        it->setProperty("url", toUrl(url));
+    }
     return id;
 }
 
@@ -153,7 +172,12 @@ void forgetView(View *view) {
     }
 }
 
-void navigate(int tab, const QString &url) { if (QQuickItem *i = item(tab)) i->setProperty("url", toUrl(url)); }
+void navigate(int tab, const QString &url) {
+    if (QQuickItem *i = item(tab)) {
+        uaFor(i, url);
+        i->setProperty("url", toUrl(url));
+    }
+}
 void goBack(int tab) { if (QQuickItem *i = item(tab)) QMetaObject::invokeMethod(i, "goBack"); }
 void goForward(int tab) { if (QQuickItem *i = item(tab)) QMetaObject::invokeMethod(i, "goForward"); }
 void reload(int tab) { if (QQuickItem *i = item(tab)) QMetaObject::invokeMethod(i, "reload"); }

@@ -356,6 +356,15 @@ impl Mpv {
     pub fn encode_pcm(candidates: &[PathBuf], url: &str, headers: &[(String, String)], aid: &str, start: f64, end: f64, out: &str, limit_secs: u64) -> Result<&'static str, String> {
         let af = "lavfi=[aresample=8000,aformat=sample_fmts=s16:sample_rates=8000:channel_layouts=mono]";
         let mut errs = Vec::new();
+        // Android's libmpv (from mpv-android) is built without FFmpeg encoders or muxers, so the encoder below always
+        // fails there: mpv's own PCM writer (ao=pcm) needs neither and goes first on Android, last elsewhere.
+        let android = cfg!(target_os = "android");
+        if android {
+            match Self::dump_pcm(candidates, url, headers, aid, start, end, out, limit_secs) {
+                Ok(()) => return Ok("s16le"),
+                Err(e) => errs.push(format!("ao-pcm: {}", e)),
+            }
+        }
         for of in ["s16le", "wav"] {
             let _ = std::fs::remove_file(out);
             match Self::encode_opts(candidates, url, headers, start, end, out, &[("vid", "no"), ("aid", aid), ("af", af), ("oac", "pcm_s16le"), ("of", of)], false, limit_secs) {
@@ -363,7 +372,77 @@ impl Mpv {
                 Err(e) => errs.push(format!("{}: {}", of, e)),
             }
         }
+        if !android {
+            match Self::dump_pcm(candidates, url, headers, aid, start, end, out, limit_secs) {
+                Ok(()) => return Ok("s16le"),
+                Err(e) => errs.push(format!("ao-pcm: {}", e)),
+            }
+        }
         Err(errs.join(" / "))
+    }
+
+    /// `encode_pcm` through mpv's PCM audio output: the decoded sound, resampled by mpv itself to 8 kHz mono s16, is
+    /// written raw to `out` as fast as it decodes (no FFmpeg encoder, muxer or filter involved).
+    fn dump_pcm(candidates: &[PathBuf], url: &str, headers: &[(String, String)], aid: &str, start: f64, end: f64, out: &str, limit_secs: u64) -> Result<(), String> {
+        let _ = std::fs::remove_file(out);
+        let hdr = header_list(headers);
+        let st = format!("{:.3}", start.max(0.0));
+        let en = format!("{:.3}", end.max(start + 0.1));
+        let mut opts: Vec<(&str, &str)> = vec![
+            ("config", "no"),
+            ("idle", "no"),
+            ("osc", "no"),
+            ("ytdl", "no"),
+            ("load-scripts", "no"),
+            ("input-default-bindings", "no"),
+            ("hwdec", "no"),
+            ("vid", "no"),
+            ("sid", "no"),
+            ("aid", aid),
+            ("network-timeout", "60"),
+            ("ao", "pcm"),
+            ("ao-pcm-file", out),
+            ("ao-pcm-waveheader", "no"),
+            ("ao-pcm-append", "no"),
+            ("audio-samplerate", "8000"),
+            ("audio-channels", "mono"),
+            ("audio-format", "s16"),
+            ("untimed", "yes"),
+            ("start", st.as_str()),
+            ("end", en.as_str()),
+        ];
+        if !hdr.is_empty() {
+            opts.push(("http-header-fields", hdr.as_str()));
+        }
+        {
+            let m = Self::create(candidates, &opts)?;
+            m.cmd(&["loadfile", url])?;
+            let t0 = std::time::Instant::now();
+            'run: loop {
+                for e in m.events() {
+                    match e {
+                        Evt::EndFile { reason, error } => {
+                            if reason == 0 {
+                                break 'run;
+                            }
+                            return Err(if !error.is_empty() { error } else { format!("mpv stopped (reason {})", reason) });
+                        }
+                        Evt::Shutdown => break 'run,
+                        _ => {}
+                    }
+                }
+                if t0.elapsed().as_secs() > limit_secs {
+                    return Err("reading the audio took too long".into());
+                }
+                std::thread::sleep(std::time::Duration::from_millis(60));
+            }
+            // dropped here: the player is destroyed and the PCM file closed before it is read
+        }
+        match std::fs::metadata(out) {
+            Ok(md) if md.len() >= 1600 => Ok(()),
+            Ok(md) => Err(format!("only {} bytes of sound", md.len())),
+            Err(e) => Err(format!("no sound file ({})", e)),
+        }
     }
 
     pub fn encode(candidates: &[PathBuf], url: &str, headers: &[(String, String)], start: f64, end: f64, out: &str, picture: bool, limit_secs: u64) -> Result<(), String> {
