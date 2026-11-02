@@ -113,6 +113,16 @@ mkdir -p dist
 BT="$(ls -d "$ANDROID_SDK_ROOT"/build-tools/*/ 2>/dev/null | sort -V | tail -1)"
 if [ -z "$BT" ] || [ ! -x "$BT/apksigner" ]; then echo "== apksigner not found under $ANDROID_SDK_ROOT/build-tools"; exit 1; fi
 KS="$HOME/.android/debug.keystore"
+# The same key on every machine: the workflow passes the project's own keystore (secret ANDROID_KEYSTORE_B64, alias
+# androiddebugkey, password android). Without it a shared runner makes a NEW key each run, every release gets another
+# signature, and Android refuses to install it over the previous one ("App not installed"): the phone keeps the old app.
+if [ -n "${ANDROID_KEYSTORE_B64:-}" ]; then
+  mkdir -p "$HOME/.android"
+  printf '%s' "$ANDROID_KEYSTORE_B64" | base64 -d > "$KS"
+  echo "== signing with the project's keystore"
+elif [ -n "${GITHUB_ACTIONS:-}" ]; then
+  echo "::warning::ANDROID_KEYSTORE_B64 is not set: this APK gets a one-off key and will NOT install over an older ReelHouse"
+fi
 if [ ! -f "$KS" ]; then
   mkdir -p "$HOME/.android"
   keytool -genkeypair -v -keystore "$KS" -storepass android -alias androiddebugkey -keypass android \
