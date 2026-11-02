@@ -43,9 +43,17 @@ fn find_in(dir: &Path, f: &dyn Fn(&str) -> bool, depth: usize) -> Option<PathBuf
     None
 }
 
+/// The server's own jar ("Suwayomi-Server.jar", "Suwayomi-Server-v2.x.jar", ...), never the launcher's.
+fn is_server_jar(name: &str) -> bool {
+    let l = name.to_lowercase();
+    l.starts_with("suwayomi") && l.ends_with(".jar") && !l.contains("launcher")
+}
+
 /// The jar of the server and the Java that runs it (the bundled one, else the one of the system).
 pub fn locate(dir: &Path) -> Option<(PathBuf, PathBuf)> {
-    let jar = find_in(dir, &|n| n.to_lowercase().starts_with("suwayomi") && n.to_lowercase().ends_with(".jar"), 8)?;
+    // The release also ships "Suwayomi-Launcher.jar", a Swing window that only starts the server. Folder order
+    // is random on Linux, so a plain "first suwayomi*.jar" could pick it and that window opened over the app.
+    let jar = find_in(dir, &|n| is_server_jar(n), 8)?;
     let java_names: &[&str] = if cfg!(windows) { &["java.exe"] } else { &["java"] };
     let bundled = find_in(dir, &|n| java_names.iter().any(|j| n.eq_ignore_ascii_case(j)), 8);
     Some((jar, bundled.unwrap_or_else(|| PathBuf::from(if cfg!(windows) { "java.exe" } else { "java" }))))
@@ -306,6 +314,8 @@ pub fn java_args(jar: &Path, dirs: &Dirs, port: u16, repos: &[String]) -> Vec<St
     let p = |k: &str, v: &str| format!("-Dsuwayomi.tachidesk.config.server.{}={}", k, v);
     vec![
         "-Xmx768m".to_string(),
+        // no window of its own, ever (tray icon, launcher, dialogs): the app is its only face
+        "-Djava.awt.headless=true".to_string(),
         owner_mark(&dirs.root),
         format!("-Djava.io.tmpdir={}", show(&dirs.tmp)),
         p("rootDir", &show(&dirs.root)),
@@ -556,12 +566,22 @@ mod tests {
     }
 
     #[test]
+    fn the_launcher_jar_is_never_the_server() {
+        assert!(is_server_jar("Suwayomi-Server.jar"));
+        assert!(is_server_jar("Suwayomi-Server-v2.1.1867.jar"));
+        assert!(!is_server_jar("Suwayomi-Launcher.jar"));
+        assert!(!is_server_jar("suwayomi-launcher.JAR"));
+    }
+
+    #[test]
     fn finds_the_jar_and_the_bundled_java() {
         let d = std::env::temp_dir().join(format!("rh-sw-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(d.join("Suwayomi/bin")).unwrap();
         std::fs::create_dir_all(d.join("Suwayomi/jre/bin")).unwrap();
         std::fs::write(d.join("Suwayomi/bin/Suwayomi-Server.jar"), b"x").unwrap();
+        // the launcher sits beside bin/ in the release and must never be the one started
+        std::fs::write(d.join("Suwayomi/Suwayomi-Launcher.jar"), b"x").unwrap();
         let java = if cfg!(windows) { "java.exe" } else { "java" };
         std::fs::write(d.join("Suwayomi/jre/bin").join(java), b"x").unwrap();
         let (jar, j) = locate(&d).unwrap();
@@ -579,6 +599,7 @@ mod tests {
         assert!(a.contains(&"-Dsuwayomi.tachidesk.config.server.port=4999".to_string()));
         assert!(a.contains(&"-Dsuwayomi.tachidesk.config.server.rootDir=/d".to_string()));
         assert!(a.contains(&"-Dsuwayomi.tachidesk.config.server.webUIEnabled=false".to_string()));
+        assert!(a.contains(&"-Djava.awt.headless=true".to_string()));
         // the local source, downloads and backups are named, inside the data folder
         assert!(a.contains(&format!("-Dsuwayomi.tachidesk.config.server.localSourcePath={}", d("local"))));
         assert!(a.contains(&format!("-Dsuwayomi.tachidesk.config.server.downloadsPath={}", d("downloads"))));
