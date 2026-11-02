@@ -665,8 +665,15 @@ fn select_challenge(inp: &LessonInput, rng: &mut Rng, w: &str, new_word: bool) -
         answer_lang: inp.tl.clone(),
         words: vec![w.to_string()],
         new_word,
+        // the word said aloud (the speaker button, and on its own when the word is new)
+        audio: word_audio(&inp.pack.lang, w),
         ..Challenge::default()
     })
+}
+
+/// The address of a spoken word: `learn_play` asks a text-to-speech voice for it.
+pub fn word_audio(lang: &str, word: &str) -> String {
+    if word.trim().is_empty() { String::new() } else { format!("tts:{}:{}", crate::util::lang_base(lang), word.trim()) }
 }
 
 fn match_challenge(inp: &LessonInput, rng: &mut Rng) -> Option<Challenge> {
@@ -1854,6 +1861,7 @@ mod tests {
         // the first lesson starts by teaching a new word
         let ch = build_lesson(&input(&p, "1-1", "eng", 3));
         assert!(ch[0].kind == "select" && ch[0].new_word);
+        assert!(ch[0].audio.starts_with("tts:") && ch[0].audio.ends_with(&ch[0].prompt));
         // no audio: no listening challenge
         let ch = build_lesson(&input(&p, "2-1", "eng", 1));
         assert!(ch.iter().all(|c| c.kind != "listen"));

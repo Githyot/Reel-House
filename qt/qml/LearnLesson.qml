@@ -63,7 +63,7 @@ Item {
         // Japanese is hard to type without an input method: the word bank first
         useBank = ch !== null && ch.answer_lang === "jpn"
         // the sentence is heard at once (later: this runs while the new state is being read)
-        if (ch && ch.audio && (kind === "listen" || kind === "assist" || kind === "kana_listen" || (kind === "kana_romaji" && ch.new_word === true)) && visible) Qt.callLater(ll.play, false)
+        if (ch && ch.audio && (kind === "listen" || kind === "assist" || kind === "kana_listen" || ((kind === "kana_romaji" || kind === "select") && ch.new_word === true)) && visible) Qt.callLater(ll.play, false)
         if (visible) keys.forceActiveFocus()
     }
     onVisibleChanged: if (visible) { reset(); keys.forceActiveFocus() }
@@ -389,6 +389,8 @@ Item {
                 spacing: 2
                 Text { visible: (ll.ch ? ll.ch.reading : "") !== ""; width: parent.width; horizontalAlignment: Text.AlignHCenter; text: ll.ch ? ll.ch.reading : ""; color: Theme.c.textDim; font.pixelSize: 18; font.family: Theme.type.family }
                 Text { width: parent.width; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.Wrap; text: ll.ch ? ll.ch.prompt : ""; color: Theme.c.text; font.pixelSize: 44; font.weight: Font.Bold; font.family: Theme.type.family }
+                // hear the word again
+                Speaker { visible: (ll.ch ? ll.ch.audio : "") !== ""; anchors.horizontalCenter: parent.horizontalCenter; topPadding: 8 }
             }
             Grid {
                 id: selGrid

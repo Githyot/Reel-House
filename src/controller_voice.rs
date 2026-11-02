@@ -114,7 +114,7 @@ pub fn nothing_heard_why(m: &Json) -> &'static str {
 }
 
 /// A browser's name: Google's voice answers it.
-const BROWSER_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0 Safari/537.36";
+pub(crate) const BROWSER_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0 Safari/537.36";
 
 /// Whether this system may run Whisper itself.
 fn local_ok() -> bool {
