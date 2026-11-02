@@ -612,15 +612,19 @@ impl Core {
         self.events.push(Event::Study);
     }
 
-    /// Plays the sentence audio of a challenge (a Tatoeba address), slower when asked.
+    /// Plays the audio of a challenge (a Tatoeba sentence, a kana sound, or a word said by the online voice the
+    /// Conversation mode also uses), slower when asked.
     pub fn learn_play(&mut self, url: &str, slow: bool) {
         // a kana sound ("kana:ka") is a file of assets/kana
         let local = url.strip_prefix("kana:").map(|snd| kana::sound_file(&self.data_dir, snd));
-        let url = match &local {
-            Some(Some(p)) => p.to_string_lossy().into_owned(),
-            Some(None) => return,
-            None if url.starts_with("https://tatoeba.org/") => url.to_string(),
-            None => return,
+        // a word ("tts:ja:なる"): that voice wants a browser's headers
+        let spoken = url.strip_prefix("tts:").and_then(|r| r.split_once(':')).map(|(lang, text)| crate::voice::google_tts_url(lang, text));
+        let url = match (&local, &spoken) {
+            (Some(Some(p)), _) => p.to_string_lossy().into_owned(),
+            (Some(None), _) => return,
+            (None, Some(u)) => u.clone(),
+            (None, None) if url.starts_with("https://tatoeba.org/") => url.to_string(),
+            _ => return,
         };
         let url = url.as_str();
         if self.study_audio.is_none() {
@@ -634,6 +638,9 @@ impl Core {
         }
         if let Some(m) = &self.study_audio {
             let _ = m.set("speed", if slow { "0.7" } else { "1" });
+            let web = spoken.is_some();
+            let _ = m.set("user-agent", if web { super::controller_voice::BROWSER_UA } else { "" });
+            let _ = m.set("referrer", if web { "https://translate.google.com/" } else { "" });
             let _ = m.cmd(&["loadfile", url, "replace"]);
         }
     }
