@@ -47,6 +47,10 @@ pub fn normalize_manifest_url(input: &str) -> Result<String, String> {
         None => (u.clone(), String::new()),
     };
     let mut p = path.trim_end_matches('/').to_string();
+    // the addon's settings page was pasted (".../configure"): its manifest sits one level up
+    if let Some(up) = p.strip_suffix("/configure") {
+        p = up.to_string();
+    }
     if !p.ends_with("/manifest.json") {
         p.push_str("/manifest.json");
     }
@@ -109,8 +113,25 @@ pub fn fetch_manifest(http: &dyn Http, url: &str) -> Result<Json, String> {
 
 /// Adds an addon, or replaces one with the same manifest id.
 pub fn install(http: &dyn Http, entries: &mut Vec<AddonEntry>, input: &str) -> Result<String, String> {
-    let url = normalize_manifest_url(input)?;
-    let manifest = fetch_manifest(http, &url)?;
+    let mut url = normalize_manifest_url(input)?;
+    let manifest = match fetch_manifest(http, &url) {
+        Ok(m) => m,
+        Err(e) => {
+            // a link to a page of the site, not to the manifest: the manifest at the site's root, when there is one
+            let root = url.split('/').take(3).collect::<Vec<_>>().join("/") + "/manifest.json";
+            let tried = url.split('?').next().unwrap_or(&url).to_string();
+            if root == tried {
+                return Err(format!("{} ({})", e, tried));
+            }
+            match fetch_manifest(http, &root) {
+                Ok(m) => {
+                    url = root;
+                    m
+                }
+                Err(_) => return Err(format!("{} ({}). Copy the addon's install link (it ends in manifest.json) from its page.", e, tried)),
+            }
+        }
+    };
     let id = manifest.get("id").str();
     let name = manifest.get("name").str();
     entries.retain(|e| e.url != url && e.manifest.get("id").str() != id);
@@ -333,6 +354,12 @@ mod tests {
 
     fn entry(url: &str, m: &str) -> AddonEntry {
         AddonEntry { url: url.to_string(), enabled: true, manifest: Json::parse(m).unwrap() }
+    }
+
+    #[test]
+    fn configure_page_link_points_at_the_manifest() {
+        assert_eq!(normalize_manifest_url("https://a.b/x1/configure").unwrap(), "https://a.b/x1/manifest.json");
+        assert_eq!(normalize_manifest_url("https://a.b/configure/").unwrap(), "https://a.b/manifest.json");
     }
 
     #[test]
