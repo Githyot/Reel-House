@@ -637,6 +637,8 @@ Item {
     // ---- control bar ----
     Rectangle {
         id: bottomBar
+        // a phone or tablet with room (landscape, 640 px and up): speed joins audio and quality on the bar
+        readonly property bool mobWide: Theme.mobile && width >= 640
         objectName: "osdBar"
         // top edge of the panel behind the controls: the menus open above it, not over the seek bar (Osd.above)
         readonly property real panelTop: barCol.y - 12
@@ -907,10 +909,10 @@ Item {
                 }
                 Item { Layout.fillWidth: true }
                 OsdButton { visible: xray.hasData && !Theme.mobile; kind: "osd"; active: xray.open; text: "X-Ray"; ToolTip.visible: hovered; ToolTip.text: Core.tr(Core.uiLang, "Cast, music and trivia of this moment"); onClicked: { xray.pinned = !xray.open; if (!xray.pinned) { xray.autoOpened = false; xray.hoverOpen = false } } }
-                OsdButton { id: qBtn; visible: !Theme.mobile; kind: "osd"; active: qMenu.visible; glyph: "quality"; ToolTip.visible: hovered; ToolTip.text: Core.tr(Core.uiLang, "Video quality and torrent"); onClicked: { qMenu.entries = page.qualityEntries(); qMenu.openAbove(qBtn) } }
-                OsdButton { id: aBtn; visible: !Theme.mobile; kind: "osd"; active: aMenu.visible; glyph: "audio"; ToolTip.visible: hovered; ToolTip.text: Core.tr(Core.uiLang, "Audio track"); onClicked: { aMenu.entries = page.audioEntries(); aMenu.openAbove(aBtn) } }
+                OsdButton { id: qBtn; kind: "osd"; active: qMenu.visible; glyph: "quality"; ToolTip.visible: hovered; ToolTip.text: Core.tr(Core.uiLang, "Video quality and torrent"); onClicked: { qMenu.entries = page.qualityEntries(); qMenu.openAbove(qBtn) } }
+                OsdButton { id: aBtn; kind: "osd"; active: aMenu.visible; glyph: "audio"; ToolTip.visible: hovered; ToolTip.text: Core.tr(Core.uiLang, "Audio track"); onClicked: { aMenu.entries = page.audioEntries(); aMenu.openAbove(aBtn) } }
                 OsdButton { id: sBtn; kind: "osd"; active: subsMenu.visible; glyph: "subtitles"; ToolTip.visible: hovered; ToolTip.text: Core.tr(Core.uiLang, "Subtitles"); onClicked: subsMenu.openAbove(sBtn) }
-                OsdButton { id: spBtn; visible: !Theme.mobile; kind: "osd"; active: speedPop.visible; glyph: "speed"; text: (Math.round((page.p.speed || 1) * 100) / 100) + "×"; ToolTip.visible: hovered; ToolTip.text: Core.tr(Core.uiLang, "Playback speed"); onClicked: speedPop.openAbove(spBtn) }
+                OsdButton { id: spBtn; visible: !Theme.mobile || bottomBar.mobWide; kind: "osd"; active: speedPop.visible; glyph: "speed"; text: (Math.round((page.p.speed || 1) * 100) / 100) + "×"; ToolTip.visible: hovered; ToolTip.text: Core.tr(Core.uiLang, "Playback speed"); onClicked: speedPop.openAbove(spBtn) }
                 OsdButton { id: uBtn; visible: !Theme.mobile; kind: "osd"; active: uMenu.visible; glyph: "upscale"; ToolTip.visible: hovered; ToolTip.text: Core.tr(Core.uiLang, "Anime4K upscaling"); onClicked: { uMenu.entries = page.upscaleEntries(); uMenu.openAbove(uBtn) } }
                 OsdButton { id: vsBtn; visible: !Theme.mobile; kind: "osd"; active: vsMenu.visible; glyph: "scale"; ToolTip.visible: hovered; ToolTip.text: Core.tr(Core.uiLang, "Video scale"); onClicked: { vsMenu.entries = page.scaleEntries(); vsMenu.openAbove(vsBtn) } }
                 OsdButton { id: edBtn; visible: !Theme.mobile; kind: "osd"; active: editorPop.visible; glyph: "scissors"; text: Core.tr(Core.uiLang, "Editor"); ToolTip.visible: hovered; ToolTip.text: Core.tr(Core.uiLang, "Cut a part of the video and save it to an Anki deck"); onClicked: page.openEditor() }
@@ -926,9 +928,8 @@ Item {
                     onClicked: {
                         const T = function(x) { return Core.tr(Core.uiLang, x) }
                         var e = [{header: T("More")}]
-                        e.push({text: T("Video quality and torrent"), key: "q"})
-                        e.push({text: T("Audio track"), key: "a"})
-                        e.push({text: T("Playback speed") + "  " + (Math.round((page.p.speed || 1) * 100) / 100) + "×", key: "sp"})
+                        // audio and quality are always on the bar; speed too when the bar is wide
+                        if (!bottomBar.mobWide) e.push({text: T("Playback speed") + "  " + (Math.round((page.p.speed || 1) * 100) / 100) + "×", key: "sp"})
                         if (xray.hasData) e.push({text: "X-Ray", key: "xray", checked: xray.open})
                         e.push({text: T("Anime4K upscaling"), key: "up"})
                         e.push({text: T("Video scale"), key: "vs"})
@@ -1100,7 +1101,8 @@ Item {
         height: Math.min(640, page.height - 60)
         modal: true
         padding: 0
-        background: OsdPanel { sheet: true }
+        // nearly opaque: the error card under it ("could not play…", its buttons) showed through on a phone
+        background: OsdPanel { id: pickerBg; sheet: true; color: String(pickerBg.o.panel).length === 9 ? "#fa" + String(pickerBg.o.panel).substring(3) : pickerBg.o.panel }
         // the dim behind the sheet
         Overlay.modal: Rectangle { color: "#80000000" }
         enter: Transition {

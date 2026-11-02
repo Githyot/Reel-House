@@ -6,6 +6,7 @@ import QtWebView
 // Only built into the Android app (this file also tells androiddeployqt to package Qt WebView's QML module).
 WebView {
     property int tabId: 0
+    property string mobileUa: ""   // the WebView's own name while a Lens page uses a desktop one (webview_host.cpp uaFor)
     property QtObject host: null
     anchors.fill: parent
     function report() { if (host) host.state(tabId, url.toString(), title, loading, canGoBack, canGoForward) }
