@@ -20,11 +20,15 @@ echo "host started on port $port after ~$((i*2)) s"
 adb forward tcp:18080 tcp:$port >/dev/null
 H=http://127.0.0.1:18080
 
-home=$(adb shell run-as $PKG_APP pwd | tr -d '\r')
-[ -n "$home" ] || fail "run-as failed (APK not debuggable?)"
+# the APK is not debuggable, so copy the extension in as root (google_apis images allow adb root)
+adb root >/dev/null; adb wait-for-device
+home=/data/user/0/$PKG_APP
+uid=$(adb shell stat -c %u $home | tr -d '\r')
+[ -n "$uid" ] || fail "app folder not found"
 dir="$home/files/extensions"
 adb push ext.apk /data/local/tmp/ext.apk >/dev/null
-adb shell "run-as $PKG_APP sh -c 'mkdir -p $dir/downloads && cp /data/local/tmp/ext.apk $dir/downloads/ext.apk'" || fail "copy failed"
+adb shell "mkdir -p $dir/downloads && cp /data/local/tmp/ext.apk $dir/downloads/ext.apk && chown -R $uid:$uid $home/files && restorecon -R $home/files" || fail "copy failed"
+adb forward tcp:18080 tcp:$port >/dev/null
 
 api() { curl -sS -m 150 -X POST -H 'Content-Type: application/json' -d "$1" $H/api; }
 check() { local r="$1" what="$2"; if echo "$r" | jq -e 'has("error")' >/dev/null 2>&1; then echo "$what: error: $(echo "$r" | jq -r .error | redact)"; return 1; fi; echo "$r" | jq -e . >/dev/null 2>&1 || { echo "$what: not JSON: $(echo "$r" | head -c 200 | redact)"; return 1; }; }
