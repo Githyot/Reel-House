@@ -143,12 +143,14 @@ Item {
                 Icon { name: sq.challenge === "type" || sq.challenge === "build" ? "audio" : (sq.challenge === "card" ? "study" : "translate"); size: 18; color: sq.ink }
                 Text {
                     Layout.fillWidth: true
-                    text: sq.quiz && sq.quiz.kind === "listen" ? sq.tr("Listening practice") : sq.tr("Study while watching")
+                    text: !sq.quiz ? "" : sq.quiz.kind === "listen" ? sq.tr("Listening practice")
+                        : sq.quiz.kind === "credits" ? sq.tr("The macaw's quiz") + ((sq.quiz.steps || 0) > 1 ? "  ·  " + sq.quiz.step + "/" + sq.quiz.steps : "")
+                        : sq.tr("Study while watching")
                     color: sq.ink
                     font.pixelSize: 13; font.weight: Font.Bold; font.family: Theme.type.family
                     font.capitalization: Font.AllUppercase
                 }
-                OsdButton { kind: "round"; glyph: "repeat"; visible: sq.challenge !== "card"; enabled: sq.busy && !sq.quiz.replaying; ToolTip.visible: hovered; ToolTip.text: sq.tr("Play the line again"); onClicked: sq.replay() }
+                OsdButton { kind: "round"; glyph: "repeat"; visible: sq.challenge !== "card" && !(sq.quiz && sq.quiz.kind === "credits"); enabled: sq.busy && !sq.quiz.replaying; ToolTip.visible: hovered; ToolTip.text: sq.tr("Play the line again"); onClicked: sq.replay() }
             }
             Text {
                 Layout.fillWidth: true
@@ -156,7 +158,7 @@ Item {
                 text: {
                     switch (sq.challenge) {
                     case "translate": return sq.tr("What does this line mean?")
-                    case "word": return sq.tr("What does this word mean?")
+                    case "word": return sq.quiz && sq.quiz.kind === "credits" ? sq.tr("I swapped a word in this line. What is its right translation?") : sq.tr("What does this word mean?")
                     case "build": return sq.tr("Put the words of the line you heard in order")
                     case "type": return sq.tr("Type what you heard")
                     case "card": return sq.tr("Do you remember this card?")

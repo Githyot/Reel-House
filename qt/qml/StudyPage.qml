@@ -161,10 +161,19 @@ Item {
                     ToolTip.visible: hovered; ToolTip.delay: 500; ToolTip.text: pg.aw.logged === true ? pg.tr("Pull from AnkiWeb") : pg.tr("Log in to AnkiWeb")
                     onClicked: pg.sync()
                 }
+                // the trash (deleted cards and decks): written out, so it shows even where icons do not draw
+                FlatButton {
+                    anchors.verticalCenter: parent.verticalCenter
+                    kind: "plain"; glyph: pg.narrow ? "trash" : ""
+                    text: pg.narrow ? "" : pg.tr("Trash") + (pg.trashCount > 0 ? " (" + pg.trashCount + ")" : "")
+                    ToolTip.visible: hovered && pg.narrow; ToolTip.text: pg.tr("Trash")
+                    onClicked: trashPop.open()
+                }
                 FlatButton {
                     id: homeMore
                     anchors.verticalCenter: parent.verticalCenter
-                    kind: "flat"; glyph: "more"; iconSize: 20; implicitWidth: 40
+                    // "•••" is text: the Shape icon of "more" does not draw on every machine (HP's Fedora)
+                    kind: "flat"; text: "•••"; implicitWidth: 40
                     ToolTip.visible: hovered; ToolTip.delay: 500; ToolTip.text: pg.tr("More")
                     onClicked: homeMenu.openBelow(homeMore, true)
                 }
@@ -323,7 +332,7 @@ Item {
                                 FlatButton {
                                     id: rowMore
                                     anchors.verticalCenter: parent.verticalCenter
-                                    kind: "flatround"; glyph: "more"; iconSize: 18
+                                    kind: "flatround"; text: "•••"; implicitWidth: 38
                                     ToolTip.visible: hovered; ToolTip.delay: 500; ToolTip.text: pg.tr("More")
                                     onClicked: { deckMenu.did = row.d.id; deckMenu.name = row.d.name; deckMenu.openBelow(rowMore, true) }
                                 }
@@ -351,6 +360,7 @@ Item {
             {key: "new", label: pg.tr("New deck")},
             {key: "browse", label: pg.tr("Browse all cards")},
             {key: "stats", label: pg.tr("Statistics")},
+            {key: "trash", label: pg.tr("Trash") + (pg.trashCount > 0 ? " (" + pg.trashCount + ")" : "")},
             {key: "account", label: pg.tr("AnkiWeb account")}
         ]
         onPicked: function(i) {
@@ -358,6 +368,7 @@ Item {
             if (k === "new") newDeck.open()
             else if (k === "browse") { if (pg.decks.length > 0) pg.go("browse") }
             else if (k === "stats") { if (pg.decks.length > 0) pg.go("stats") }
+            else if (k === "trash") trashPop.open()
             else ankiLogin.open()
         }
     }
@@ -371,6 +382,7 @@ Item {
             {key: "add", label: pg.tr("Add cards")},
             {key: "browse", label: pg.tr("Browse cards")},
             {key: "stats", label: pg.tr("Statistics")},
+            {key: "jlab", label: pg.tr("Jlab mode") + ((pg.st.jlab && (pg.st.jlab.decks || []).indexOf(did) >= 0) ? " ✓" : "")},
             {key: "rename", label: pg.tr("Rename…")},
             {key: "delete", label: pg.tr("Delete…"), danger: true}
         ]
@@ -380,6 +392,7 @@ Item {
             else if (k === "add") pg.go("add", did)
             else if (k === "browse") pg.go("browse", did)
             else if (k === "stats") pg.go("stats", did)
+            else if (k === "jlab") jlabSet.openFor(did, name)
             else if (k === "rename") { renDeck.did = did; renField.text = name; renDeck.open() }
             else { delDeck.did = did; delDeck.name = name; delDeck.open() }
         }
@@ -438,7 +451,7 @@ Item {
             width: parent.width
             spacing: 14
             Lbl { width: parent.width; wrapMode: Text.Wrap; bold: true; size: 18; text: pg.tr("Delete this deck?") }
-            Lbl { width: parent.width; wrapMode: Text.Wrap; dim: true; text: delDeck.name + " — " + pg.tr("its cards and what you learned about them are removed.") }
+            Lbl { width: parent.width; wrapMode: Text.Wrap; dim: true; text: delDeck.name + " — " + pg.tr("it goes to the trash with its cards; you can restore it for 30 days.") }
             Row {
                 anchors.right: parent.right
                 spacing: 8
@@ -447,6 +460,11 @@ Item {
             }
         }
     }
+
+    // what was deleted lately (cards and decks), to bring back
+    readonly property int trashCount: st.trash !== undefined && st.trash !== null ? st.trash.length : 0
+    function openTrash() { trashPop.open() }
+    StudyTrash { id: trashPop }
 
     // The other pages of the mode are built the first time they are opened (Learn, Conversation and Time are
     // large) and then kept, so what the user was doing there is still there when they come back.
@@ -479,7 +497,11 @@ Item {
         cNew: pg.cNew
         cLearn: pg.cLearn
         cDue: pg.cDue
+        trashCount: pg.trashCount
+        onOpenTrash: trashPop.open()
     }
+    // settings of Jlab mode, from the menu of a deck
+    JlabSettings { id: jlabSet }
     // tells the study-time counter the user is here (window focus, pointer moving); takes no clicks
     StudyTimeBeacon { anchors.fill: parent; z: 1000 }
 }

@@ -20,6 +20,7 @@ pub mod gzip;
 pub mod http;
 pub mod i18n;
 pub mod json;
+pub mod jlab;
 pub mod kanji;
 pub mod karaoke;
 pub mod knowledge;

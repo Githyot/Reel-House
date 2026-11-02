@@ -134,6 +134,7 @@ impl Core {
         self.events.push(Event::NovelLibrary);
         // Study: the collection, knowledge.md, Learn's progress, the study time and the reminders
         self.study = Core::load_study(&d);
+        self.jlab = crate::jlab::Jlab::load(&d);
         self.study_dirty = 0;
         self.study_session = None;
         self.study_browse = None;

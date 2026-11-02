@@ -14,7 +14,7 @@ use super::*;
 use crate::animeskip::Kind;
 use crate::knowledge::CardRef;
 use crate::subtitles::{decode, parse_cues};
-use super::wordmix::{self, Lexicon, Span};
+use super::wordmix::{self, Heard, Lexicon, Span};
 
 /// A line of the subtitle: when it shows and its text (one line, no tags).
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -67,6 +67,9 @@ pub struct Quiz {
     pub translation: String,
     pub card: Option<CardRef>,
     pub result: Option<QuizResult>,
+    /// The dictionary form of `word` when it is another form of it (a swapped word copied from the line heard): the
+    /// answer counts for it.
+    pub base: String,
 }
 
 #[derive(Default)]
@@ -100,6 +103,68 @@ pub struct StudyPlay {
     cue: Option<(u64, &'static str, u64)>,
     cue_serial: u64,
     shh: bool,
+    /// The learned words mixed into the subtitle this episode: asked by the macaw at the credits and listed by its
+    /// button in the player (kept when the questions reset).
+    pub swapped: Swapped,
+}
+
+/// A learned word that word mixing put into a line of the episode.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SwapSeen {
+    /// The learned word ("食べる"), its reading, the word of the known language it replaced ("comer").
+    pub word: String,
+    pub reading: String,
+    pub original: String,
+    /// The dictionary form when `word` is another form of it, as said in the audio ("あった" of ある).
+    pub base: String,
+    /// The line as shown (mixed) and as it was.
+    pub line: String,
+    pub plain: String,
+    /// When it showed (seconds into the episode).
+    pub at: f64,
+}
+
+/// The words swapped in the episode playing, and the macaw's quiz on them at the credits.
+#[derive(Clone, Debug, Default)]
+pub struct Swapped {
+    /// The session they belong to.
+    pub session: u64,
+    pub words: Vec<SwapSeen>,
+    /// The credits quiz was already asked (once per episode).
+    pub asked: bool,
+    /// Words still to ask in the credits quiz, and how many it has in all.
+    pub queue: Vec<SwapSeen>,
+    pub total: usize,
+}
+
+/// How many words the macaw asks at the credits.
+pub const CREDITS_QUIZ_MAX: usize = 3;
+
+/// Keeps a swapped word once (the same learned word in the episode counts once; the first line it showed in).
+pub fn note_swap(list: &mut Vec<SwapSeen>, seen: SwapSeen) -> bool {
+    if seen.word.trim().is_empty() || list.iter().any(|x| x.word == seen.word) {
+        return false;
+    }
+    list.push(seen);
+    true
+}
+
+/// Where the credits begin: the ending of the skip data, else near the end of a long enough video.
+pub fn credits_start(segments: &[(f64, bool)], dur: f64) -> Option<f64> {
+    if let Some(t) = segments.iter().filter(|(_, credits)| *credits).map(|(t, _)| *t).fold(None, |a: Option<f64>, t| Some(a.map_or(t, |a| a.max(t)))) {
+        return Some(t);
+    }
+    if dur < 300.0 {
+        return None;
+    }
+    Some(dur - (dur * 0.05).clamp(60.0, 300.0))
+}
+
+/// The words for the credits quiz: the least known first (lowest recall), at most `max`.
+pub fn credits_pick(words: &[SwapSeen], strength: impl Fn(&str) -> f64, max: usize) -> Vec<SwapSeen> {
+    let mut v: Vec<(f64, usize)> = words.iter().enumerate().map(|(i, w)| (strength(&w.word), i)).collect();
+    v.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal).then(a.1.cmp(&b.1)));
+    v.into_iter().take(max).map(|(_, i)| words[i].clone()).collect()
 }
 
 /// Word mixing in the player: the subtitle on screen is in a language the user knows; lines picked at the rate get
@@ -123,12 +188,53 @@ pub struct Mix {
     hidden: bool,
     /// The mixed text the macaw last peeked at.
     peeked: String,
+    /// The subtitle in the language of the audio (the study one), not shown: a word is swapped only when it is said
+    /// in the line heard at that moment, and as it is said there (wordmix `swap_heard`).
+    orig: Vec<Line>,
+    /// The episode and language it was looked for ("" = not yet), a search running, searches made, where it came from.
+    orig_key: String,
+    orig_busy: bool,
+    orig_tries: u32,
+    orig_from: String,
+    /// The audio playing is in the study language (or untagged): the original subtitle matches what is heard.
+    audio_ok: bool,
+    /// The viewer was told that no original subtitle was found (once per episode).
+    orig_told: bool,
+}
+
+/// How many times (every 2 s) the original subtitle is looked for before giving up: the addons answer late.
+const ORIG_TRIES: u32 = 15;
+
+/// The text of the lines of `orig` said during `start..end` (a line of the other subtitle): those that overlap it by
+/// a good part, with a little room for subtitles timed by different people.
+pub fn heard_at(orig: &[Line], start: f64, end: f64) -> String {
+    let (s, e) = (start - 0.3, end.max(start) + 0.3);
+    orig.iter()
+        .filter(|l| {
+            let over = e.min(l.end) - s.max(l.start);
+            let short = (l.end - l.start).min(e - s).max(0.1);
+            over > 0.0 && over >= 0.35 * short
+        })
+        .map(|l| l.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// The id of the overlay with the mixed line (any number no other overlay of the app uses).
 const MIX_OVERLAY: &str = "47";
 
 impl StudyPlay {
+    /// The subtitle in the language of the audio found for the episode `sid` (empty when none yet), and whether it is
+    /// still being looked for (mining waits for it: its cards show that line).
+    pub(super) fn orig_lines(&self, sid: u64) -> (&[Line], bool) {
+        let mx = &self.mix;
+        let ours = mx.orig_key.split('|').next() == Some(sid.to_string().as_str());
+        if !ours {
+            return (&[], true);
+        }
+        (&mx.orig, mx.orig.is_empty() && (mx.orig_busy || mx.orig_tries < ORIG_TRIES))
+    }
+
     fn active(&self) -> bool {
         !self.key.is_empty() || self.quiz.is_some() || self.hidden
     }
@@ -492,6 +598,10 @@ impl Core {
         // the other ways to study while watching, each with its own switch
         self.mining_step(&mpv);
         self.wordmix_step(&mpv);
+        // the macaw's quiz on the swapped words at the credits has its own clock
+        if self.credits_quiz_step(&mpv) {
+            return;
+        }
         let g = &self.settings.general;
         let on = g.study_in_player && !g.study_lang.is_empty() && g.study_quiz_rate > 0 && (g.study_quiz_cards || g.study_quiz_listen);
         let playing = self.session.as_ref().map(|s| s.stage == Stage::Playing).unwrap_or(false);
@@ -786,8 +896,9 @@ impl Core {
     /// Checks an answer: for choices the index of the option, for "build" / "type" the text, for "card" "right" or
     /// "wrong" (the user grades a flashcard). The words of the line are recorded in the knowledge state.
     pub fn study_quiz_answer(&mut self, id: u64, answer: &str) {
+        let credits_lang = lang3(&self.settings.general.study_lang);
         let Some(q) = self.study_play.quiz.as_mut().filter(|q| q.id == id && q.result.is_none()) else { return };
-        let lang = self.study_play.lang3.clone();
+        let lang = if q.kind == "credits" { credits_lang } else { self.study_play.lang3.clone() };
         let (correct, expected) = match q.challenge.as_str() {
             "translate" | "word" => {
                 let i = answer.trim().parse::<usize>().ok();
@@ -814,7 +925,7 @@ impl Core {
         };
         let d = if matches!(q.challenge.as_str(), "build" | "type") { diff(&expected, answer) } else { vec![] };
         q.result = Some(QuizResult { correct, expected, given: answer.to_string(), diff: d });
-        let word = q.word.clone();
+        let word = if q.base.is_empty() { q.word.clone() } else { q.base.clone() };
         let text = q.line.text.clone();
         if q.challenge == "word" {
             self.knowledge.record(&lang, &word, correct);
@@ -828,9 +939,15 @@ impl Core {
     /// Closes the question (skipped, or Continue after the answer) and plays on.
     pub fn study_quiz_skip(&mut self, id: u64) {
         let Some(mpv) = self.mpv.clone() else { return };
-        if self.study_play.quiz.as_ref().map(|q| q.id == id).unwrap_or(false) {
-            self.studyplay_close(&mpv, true);
+        let Some(kind) = self.study_play.quiz.as_ref().filter(|q| q.id == id).map(|q| q.kind.clone()) else { return };
+        if kind == "credits" && !self.study_play.swapped.queue.is_empty() {
+            self.credits_quiz_next(&mpv);
+            return;
         }
+        if kind == "credits" && self.settings.general.study_mascot_cues {
+            self.study_play.send_cue("cheer", 2500);
+        }
+        self.studyplay_close(&mpv, true);
     }
 
     fn studyplay_close(&mut self, mpv: &Mpv, resume: bool) {
@@ -861,9 +978,210 @@ impl Core {
         self.studyplay_show_subs(mpv);
         // the word mixing and the cue numbering go on (they have their own switches)
         let mix = std::mem::take(&mut self.study_play.mix);
+        let swapped = std::mem::take(&mut self.study_play.swapped);
         let (cue, cue_serial) = (self.study_play.cue, self.study_play.cue_serial);
-        self.study_play = StudyPlay { mix, cue, cue_serial, ..StudyPlay::default() };
+        // the question serial goes on too: a new question never takes the id of the one the window still shows
+        let serial = self.study_play.serial;
+        self.study_play = StudyPlay { mix, swapped, cue, cue_serial, serial, ..StudyPlay::default() };
         self.events.push(Event::Session);
+    }
+
+    // ---------- the swapped words of the episode, and the macaw's quiz at the credits ----------
+
+    /// Keeps the learned words of a mixed line that just showed.
+    fn note_swaps(&mut self, mixed: &str, spans: &[Span], plain_line: &str, at: f64) {
+        let sid = self.session.as_ref().map(|s| s.id).unwrap_or(0);
+        let study3 = lang3(&self.settings.general.study_lang);
+        let sw = &mut self.study_play.swapped;
+        if sw.session != sid {
+            *sw = Swapped { session: sid, ..Swapped::default() };
+        }
+        let mut added = false;
+        for sp in spans {
+            let reading = if !sp.reading.is_empty() || !sp.base.is_empty() {
+                sp.reading.clone()
+            } else {
+                self.knowledge.row(&study3, &sp.word).map(|r| r.reading.clone()).filter(|r| *r != sp.word).unwrap_or_default()
+            };
+            let seen = SwapSeen {
+                word: sp.word.clone(),
+                reading,
+                original: sp.original.clone(),
+                base: sp.base.clone(),
+                line: mixed.to_string(),
+                plain: plain(plain_line),
+                at,
+            };
+            added |= note_swap(&mut self.study_play.swapped.words, seen);
+        }
+        if added {
+            self.events.push(Event::Session);
+        }
+    }
+
+    /// Opens the credits quiz when the ending begins (once per episode, only when words were swapped) and keeps it
+    /// while it shows. True while a credits question is on screen (the other questions wait).
+    fn credits_quiz_step(&mut self, mpv: &Mpv) -> bool {
+        let sid = self.session.as_ref().map(|s| s.id).unwrap_or(0);
+        let playing = self.session.as_ref().map(|s| s.stage == Stage::Playing).unwrap_or(false);
+        if self.study_play.swapped.session != sid {
+            self.study_play.swapped = Swapped { session: sid, ..Swapped::default() };
+        }
+        let showing = self.study_play.quiz.as_ref().map(|q| q.kind == "credits").unwrap_or(false);
+        if showing {
+            if !playing {
+                self.study_play.swapped.queue.clear();
+                self.studyplay_close(mpv, false);
+                return false;
+            }
+            // the viewer played on without answering: the questions go away
+            if mpv.get_flag("pause") == Some(false) {
+                self.study_play.swapped.queue.clear();
+                self.studyplay_close(mpv, false);
+                return false;
+            }
+            return true;
+        }
+        let g = &self.settings.general;
+        if !playing || !g.study_in_player || g.study_lang.is_empty() || self.study_play.quiz.is_some() {
+            return false;
+        }
+        let sw = &self.study_play.swapped;
+        if sw.asked || sw.words.is_empty() {
+            return false;
+        }
+        let dur = mpv.get_f64("duration").unwrap_or(0.0);
+        let segs: Vec<(f64, bool)> = self.session.as_ref().map(|s| s.segments.iter().map(|x| (x.start, matches!(x.kind, Kind::Credits))).collect()).unwrap_or_default();
+        let Some(start) = credits_start(&segs, dur) else { return false };
+        let pos = mpv.get_f64("time-pos").unwrap_or(0.0);
+        // the last swapped word showed before the credits (a jump back to the start does not ask)
+        let last_seen = sw.words.iter().map(|w| w.at).fold(0.0, f64::max);
+        if pos < start || last_seen > pos + 1.0 {
+            return false;
+        }
+        let study3 = lang3(&g.study_lang);
+        let now = crate::util::now_unix() as i64;
+        let knowledge = &self.knowledge;
+        let picks = credits_pick(&sw.words, |w| knowledge.row(&study3, w).map(|r| r.strength(now)).unwrap_or(0.0), CREDITS_QUIZ_MAX);
+        crate::debug::log("study", &format!("credits quiz: {} of {} swapped words, at {:.0} s", picks.len(), sw.words.len(), pos));
+        let sw = &mut self.study_play.swapped;
+        sw.asked = true;
+        sw.total = picks.len();
+        sw.queue = picks;
+        let _ = mpv.set("pause", "yes");
+        self.credits_quiz_next(mpv);
+        true
+    }
+
+    /// The next word of the credits quiz: the mixed line with the learned word, which word it replaced?
+    fn credits_quiz_next(&mut self, mpv: &Mpv) {
+        if self.study_play.swapped.queue.is_empty() {
+            self.studyplay_close(mpv, true);
+            return;
+        }
+        let w = self.study_play.swapped.queue.remove(0);
+        let left = self.study_play.swapped.queue.len();
+        let total = self.study_play.swapped.total;
+        let _ = mpv.set("pause", "yes");
+        let sp = &mut self.study_play;
+        sp.serial += 1;
+        let mut rng = Rng(0x2545_F491_4F6C_DD1D ^ (w.at * 1000.0) as u64 ^ crate::util::now_unix().wrapping_mul(2_654_435_761));
+        let answer = w.original.to_lowercase();
+        // the wrong options: the other swapped words of the episode first, then other learned words
+        let mut pool: Vec<String> = sp.swapped.words.iter().map(|x| x.original.to_lowercase()).collect();
+        if let Some(lex) = &sp.mix.lex {
+            pool.extend(lex.keys().into_iter().filter(|k| !k.contains(' ') || k.len() < 16));
+        }
+        pool.sort();
+        pool.dedup();
+        let mut opts: Vec<String> = pick_others(&pool, &answer, 3, &mut rng);
+        opts.push(answer.clone());
+        rng.shuffle(&mut opts);
+        let q = Quiz {
+            id: sp.serial,
+            kind: "credits".into(),
+            challenge: "word".into(),
+            line: Line { start: w.at, end: w.at, text: w.line.clone() },
+            show_text: true,
+            answer_idx: opts.iter().position(|o| *o == answer).unwrap_or(0),
+            options: opts,
+            word: w.word.clone(),
+            base: w.base.clone(),
+            expected: answer,
+            translation: w.plain.clone(),
+            ..Quiz::default()
+        };
+        sp.quiz = Some(q);
+        sp.notice = None;
+        crate::debug::log("study", &format!("credits quiz: asking {} ({} left of {})", w.word, left, total));
+        self.events.push(Event::Session);
+    }
+
+    /// `player.studySwaps`: the learned words swapped into the subtitle this episode (the macaw's button).
+    pub fn study_swaps_json(&self) -> Json {
+        let sid = self.session.as_ref().map(|s| s.id).unwrap_or(0);
+        let sw = &self.study_play.swapped;
+        if sw.session != sid {
+            return Json::Arr(vec![]);
+        }
+        Json::Arr(
+            sw.words
+                .iter()
+                .map(|w| {
+                    Json::obj(vec![
+                        ("word", Json::Str(w.word.clone())),
+                        ("reading", Json::Str(w.reading.clone())),
+                        ("original", Json::Str(w.original.clone())),
+                        ("base", Json::Str(w.base.clone())),
+                        ("line", Json::Str(w.line.clone())),
+                        ("plain", Json::Str(w.plain.clone())),
+                        ("at", Json::Num(w.at)),
+                    ])
+                })
+                .collect(),
+        )
+    }
+
+    /// The macaw's button: the swapped words of the episode as flashcards in "Seu Reels" (once each).
+    pub fn study_swaps_to_cards(&mut self) {
+        let sid = self.session.as_ref().map(|s| s.id).unwrap_or(0);
+        let words = if self.study_play.swapped.session == sid { self.study_play.swapped.words.clone() } else { vec![] };
+        let Some(sess) = self.session.as_ref() else { return };
+        if words.is_empty() {
+            self.toast("No swapped words in this episode yet.");
+            return;
+        }
+        let tag = mining::ep_tag(&sess.sid, &sess.title);
+        let source = sess.title.clone();
+        let now = Self::now_secs();
+        let mut added = 0;
+        for w in &words {
+            match mining::add_swapped(&mut self.study, &tag, w, &source, now) {
+                Ok(true) => added += 1,
+                Ok(false) => {}
+                Err(e) => {
+                    self.toast(&e);
+                    return;
+                }
+            }
+        }
+        if added > 0 {
+            self.save_study();
+        }
+        crate::debug::log("study", &format!("swapped words: {} cards added of {}", added, words.len()));
+        self.toast(if added == 0 { "These words are already in Seu Reels." } else { "Flashcards added to Seu Reels." });
+        self.events.push(Event::Study);
+    }
+
+    /// The credits quiz: which question this is ("1 of 3"), 0/0 when none.
+    pub fn credits_quiz_index(&self) -> (usize, usize) {
+        match &self.study_play.quiz {
+            Some(q) if q.kind == "credits" => {
+                let sw = &self.study_play.swapped;
+                (sw.total - sw.queue.len(), sw.total)
+            }
+            _ => (0, 0),
+        }
     }
 
     // ---------- word mixing (wordmix.rs) ----------
@@ -883,6 +1201,7 @@ impl Core {
         if self.study_play.mix.last_check.map(|t| t.elapsed().as_secs_f64() >= 2.0).unwrap_or(true) {
             self.study_play.mix.last_check = Some(Instant::now());
             self.wordmix_prepare(mpv);
+            self.wordmix_orig_step(mpv);
         }
         let mx = &self.study_play.mix;
         if mx.key.is_empty() || mx.key == "-" || mx.lex.as_ref().map(|l| l.is_empty()).unwrap_or(true) {
@@ -903,17 +1222,32 @@ impl Core {
         let reading = self.settings.general.study_wordmix_reading;
         // the text on screen now, and (a subtitle file) the one about to show
         let pos = mpv.get_f64("time-pos").unwrap_or(0.0) - mpv.get_f64("sub-delay").unwrap_or(0.0);
-        let (now_text, next_text, ends) = if self.study_play.mix.lines.is_empty() {
+        // each text with the time it shows (start, end), to find the line heard then
+        let (now_text, next_text, ends, now_at, next_at) = if self.study_play.mix.lines.is_empty() {
             let t = mpv.get_str("sub-text").unwrap_or_default();
             let end = mpv.get_f64("sub-end").unwrap_or(pos + 2.0);
-            (t.clone(), t, end)
+            let start = mpv.get_f64("sub-start").unwrap_or(pos);
+            (t.clone(), t, end, (start, end), (start, end))
         } else {
-            let at = |t: f64| self.study_play.mix.lines.iter().filter(|l| l.start <= t && t < l.end).map(|l| l.text.as_str()).collect::<Vec<_>>().join("\n");
-            let end = self.study_play.mix.lines.iter().filter(|l| l.start <= pos && pos < l.end).map(|l| l.end).fold(pos, f64::max);
-            (at(pos), at(pos + 0.08), end)
+            let lines = &self.study_play.mix.lines;
+            let at = |t: f64| lines.iter().filter(|l| l.start <= t && t < l.end).map(|l| l.text.as_str()).collect::<Vec<_>>().join("\n");
+            let span = |t: f64| {
+                let on: Vec<&Line> = lines.iter().filter(|l| l.start <= t && t < l.end).collect();
+                (on.iter().map(|l| l.start).fold(t, f64::min), on.iter().map(|l| l.end).fold(t, f64::max))
+            };
+            let end = lines.iter().filter(|l| l.start <= pos && pos < l.end).map(|l| l.end).fold(pos, f64::max);
+            (at(pos), at(pos + 0.08), end, span(pos), span(pos + 0.08))
         };
-        let now_mix = self.wordmix_of(&now_text, rate);
-        let next_mix = self.wordmix_of(&next_text, rate);
+        // with the subtitle of the audio, only words said in it are swapped; without one, and the viewer wants
+        // that, none are; else the old way (the dictionary form)
+        let mx = &self.study_play.mix;
+        let heard_mode = mx.audio_ok && !mx.orig.is_empty();
+        if !heard_mode && mx.audio_ok && self.settings.general.study_wordmix_confirm {
+            self.wordmix_clear(mpv);
+            return;
+        }
+        let now_mix = self.wordmix_of(&now_text, rate, heard_mode.then_some(now_at));
+        let next_mix = self.wordmix_of(&next_text, rate, heard_mode.then_some(next_at));
         let hide = !now_mix.1.is_empty() || !next_mix.1.is_empty();
         if !hide {
             self.wordmix_clear(mpv);
@@ -942,6 +1276,7 @@ impl Core {
         // the macaw peeks at a new mixed line, from the corner, while it shows
         if !now_mix.1.is_empty() && mx.peeked != now_mix.0 {
             mx.peeked = now_mix.0.clone();
+            self.note_swaps(&now_mix.0, &now_mix.1, &now_text, pos);
             if self.settings.general.study_mascot_cues {
                 let ms = ((ends - pos).clamp(1.0, 8.0) * 1000.0) as u64;
                 self.study_play.send_cue("peek", ms);
@@ -950,23 +1285,137 @@ impl Core {
     }
 
     /// A text mixed (from the cache): the new text and the learned words in it (none when the line is not picked).
-    fn wordmix_of(&mut self, text: &str, rate: u32) -> (String, Vec<Span>) {
+    /// `at`: when the line shows (start, end), to check it against the subtitle of the audio; None = the old way.
+    fn wordmix_of(&mut self, text: &str, rate: u32, at: Option<(f64, f64)>) -> (String, Vec<Span>) {
         if text.trim().is_empty() {
             return (text.to_string(), vec![]);
         }
-        let mx = &mut self.study_play.mix;
-        if let Some(r) = mx.cache.get(text) {
+        let said = at.map(|(a, b)| heard_at(&self.study_play.mix.orig, a, b));
+        let key = match &said {
+            Some(h) => format!("{}\u{1}{}", text, h),
+            None => text.to_string(),
+        };
+        if let Some(r) = self.study_play.mix.cache.get(&key) {
             return r.clone();
         }
-        let r = match &mx.lex {
-            Some(lex) if wordmix::picked(text, rate) => wordmix::swap_line(lex, text, wordmix::max_for(text)),
+        let study3 = lang3(&self.settings.general.study_lang);
+        let heard: Option<Vec<Heard>> =
+            said.map(|h| self.knowledge.heard_words(&study3, &h).into_iter().map(|(surface, base)| Heard { surface, base }).collect());
+        let mx = &mut self.study_play.mix;
+        let r = match (&mx.lex, &heard) {
+            (Some(lex), Some(h)) if wordmix::picked(text, rate) => wordmix::swap_heard(lex, text, wordmix::max_for(text), h),
+            (Some(lex), None) if wordmix::picked(text, rate) => wordmix::swap_line(lex, text, wordmix::max_for(text)),
             _ => (text.to_string(), vec![]),
         };
         if mx.cache.len() > 4000 {
             mx.cache.clear();
         }
-        mx.cache.insert(text.to_string(), r.clone());
+        mx.cache.insert(key, r.clone());
         r
+    }
+
+    /// Looks for the subtitle in the language of the audio (the study language) to check the swaps against: a
+    /// subtitle file loaded in the player, a track built into the video (read out of it in the background), or one
+    /// the user's subtitle addons offer (downloaded). Tried every 2 s for a while: the addons answer late.
+    pub(super) fn wordmix_orig_step(&mut self, mpv: &Mpv) {
+        let study = util::lang_base(&self.settings.general.study_lang);
+        let sid = self.session.as_ref().map(|s| s.id).unwrap_or(0);
+        let okey = format!("{}|{}", sid, study);
+        // the audio playing: the subtitle of the study language matches it only when it is in that language
+        let aid = mpv.get_i64("aid");
+        let audio_lang = mpv.tracks("audio").into_iter().find(|t| Some(t.id) == aid).map(|t| util::lang_base(&t.lang)).unwrap_or_default();
+        let mx = &mut self.study_play.mix;
+        if mx.orig_key != okey {
+            mx.orig_key = okey.clone();
+            mx.orig.clear();
+            mx.orig_busy = false;
+            mx.orig_tries = 0;
+            mx.orig_from.clear();
+            mx.orig_told = false;
+            mx.cache.clear();
+        }
+        let ok = audio_lang.is_empty() || audio_lang == study;
+        if ok != mx.audio_ok {
+            mx.audio_ok = ok;
+            mx.cache.clear();
+        }
+        if !mx.orig.is_empty() || mx.orig_busy || study.is_empty() {
+            return;
+        }
+        if mx.orig_tries >= ORIG_TRIES {
+            // only word mixing tells it (mining also looks for this subtitle, for the Japanese line of its cards)
+            let g = &self.settings.general;
+            if mx.audio_ok && !mx.orig_told && g.study_wordmix_confirm && g.study_wordmix && g.study_wordmix_rate > 0 {
+                mx.orig_told = true;
+                crate::debug::log("study", "word mixing: no subtitle in the language of the audio, no words swapped");
+                self.toast("No subtitle in the language of the audio: words are swapped only when one is found (Preferences > Study).");
+            }
+            return;
+        }
+        mx.orig_tries += 1;
+        let tracks: Vec<crate::mpv::Track> = mpv.tracks("sub").into_iter().filter(|t| util::lang_base(&t.lang) == study).collect();
+        // a subtitle file loaded in the player
+        for t in tracks.iter().filter(|t| t.external && !t.file.is_empty()) {
+            let lines = read_lines(&t.file);
+            if !lines.is_empty() {
+                self.on_orig_lines(&okey, lines, &format!("file {}", t.file));
+                return;
+            }
+        }
+        let cache = self.data_dir.join("subtitles");
+        // a text track built into the video
+        if let Some(e) = tracks.iter().filter(|t| !t.external).find_map(|t| self.embedded_at(t.id).filter(|e| !crate::mkvsubs::is_picture_codec(&e.codec))) {
+            self.study_play.mix.orig_busy = true;
+            let key = okey.clone();
+            self.spawn(move |tx, _| {
+                let cancel = AtomicBool::new(false);
+                let r = super::controller_sub::read_embedded(&e, &cache, &cancel, &|_| {});
+                send(tx, Msg::OrigSubs(key, "built-in track".into(), r));
+            });
+            return;
+        }
+        // one of the subtitles the addons offer
+        let cand = self.session.as_ref().and_then(|s| s.sub_cands.iter().find(|c| !c.url.is_empty() && util::lang_base(&c.lang) == study).cloned());
+        if let Some(c) = cand {
+            self.study_play.mix.orig_busy = true;
+            let key = okey.clone();
+            self.spawn(move |tx, http| {
+                let r = subtitles::fetch_srt(&*http, &c.url, &cache);
+                send(tx, Msg::OrigSubs(key, "addon".into(), r));
+            });
+        }
+    }
+
+    fn on_orig_lines(&mut self, key: &str, lines: Vec<Line>, from: &str) {
+        let mx = &mut self.study_play.mix;
+        if mx.orig_key != key {
+            return;
+        }
+        crate::debug::log("study", &format!("word mixing: {} lines of the audio's subtitle ({}), words checked against them", lines.len(), from));
+        mx.orig = lines;
+        mx.orig_from = from.to_string();
+        mx.orig_busy = false;
+        mx.cache.clear();
+    }
+
+    /// The subtitle of the audio read out of the video or downloaded (`wordmix_orig_step`).
+    pub(super) fn on_orig_subs(&mut self, key: String, from: String, r: Result<std::path::PathBuf, String>) {
+        let lines = match r {
+            Ok(p) => read_lines(&p.to_string_lossy()),
+            Err(e) => {
+                crate::debug::log("study", &format!("word mixing: the audio's subtitle ({}) could not be read: {}", from, e));
+                vec![]
+            }
+        };
+        if lines.is_empty() {
+            if self.study_play.mix.orig_key == key {
+                self.study_play.mix.orig_busy = false;
+                // that source gives nothing: stop trying it
+                self.study_play.mix.orig_tries = ORIG_TRIES;
+            }
+            return;
+        }
+        self.on_orig_lines(&key, lines, &from);
     }
 
     /// Checks the subtitle shown: in a known language (not the study one) it can be mixed; then the learned words,
@@ -1102,7 +1551,10 @@ impl Core {
             ("cardDeck", Json::Str(q.card.as_ref().map(|c| c.deck.clone()).unwrap_or_default())),
             ("replaying", Json::Bool(self.study_play.replay_until.is_some())),
             // the macaw brings the card in and takes it away (StudyQuiz.qml)
-            ("mascot", Json::Bool(self.settings.general.study_mascot_cues)),
+            // the credits quiz is the macaw's own: it always brings it
+            ("mascot", Json::Bool(self.settings.general.study_mascot_cues || q.kind == "credits")),
+            ("step", Json::Num(self.credits_quiz_index().0 as f64)),
+            ("steps", Json::Num(self.credits_quiz_index().1 as f64)),
             ("result", result),
         ])
     }
@@ -1189,5 +1641,51 @@ mod tests {
         assert_eq!(translation_of(&tr, &ln(10.0, 11.0, "x")), "");
         assert_eq!(lang3("ja"), "jpn");
         assert_eq!(lang3("pt-BR"), "por");
+    }
+
+    fn seen(word: &str, original: &str, at: f64) -> SwapSeen {
+        SwapSeen { word: word.into(), original: original.into(), line: format!("Eu quero {} agora", word), plain: format!("Eu quero {} agora", original), at, ..SwapSeen::default() }
+    }
+
+    #[test]
+    fn swapped_words_are_kept_once() {
+        let mut v = vec![];
+        assert!(note_swap(&mut v, seen("食べる", "comer", 10.0)));
+        assert!(!note_swap(&mut v, seen("食べる", "comer", 50.0)));
+        assert!(note_swap(&mut v, seen("猫", "gato", 60.0)));
+        assert!(!note_swap(&mut v, seen(" ", "x", 70.0)));
+        assert_eq!(v.len(), 2);
+        assert_eq!(v[0].at, 10.0);
+    }
+
+    #[test]
+    fn credits_begin_at_the_ending_or_near_the_end() {
+        // the ending of the skip data
+        assert_eq!(credits_start(&[(80.0, false), (1300.0, true)], 1420.0), Some(1300.0));
+        // none: near the end of a long video (5 %, between 1 and 5 minutes)
+        assert_eq!(credits_start(&[(80.0, false)], 1420.0), Some(1420.0 - 71.0));
+        assert_eq!(credits_start(&[], 7200.0), Some(6900.0));
+        assert_eq!(credits_start(&[], 600.0), Some(540.0));
+        // a short clip has no credits
+        assert_eq!(credits_start(&[], 120.0), None);
+    }
+
+    #[test]
+    fn the_credits_quiz_asks_the_least_known_words() {
+        let words = vec![seen("a", "1", 1.0), seen("b", "2", 2.0), seen("c", "3", 3.0), seen("d", "4", 4.0)];
+        let st = |w: &str| match w { "a" => 0.9, "b" => 0.2, "c" => 0.5, _ => 0.2 };
+        let got: Vec<String> = credits_pick(&words, st, 3).into_iter().map(|w| w.word).collect();
+        assert_eq!(got, vec!["b", "d", "c"]);
+        assert_eq!(credits_pick(&words, st, 10).len(), 4);
+    }
+
+    #[test]
+    fn line_heard_is_the_one_said_at_the_same_time() {
+        let l = |a: f64, b: f64, t: &str| Line { start: a, end: b, text: t.into() };
+        let orig = vec![l(10.0, 12.0, "猫があった"), l(12.1, 14.0, "食べた"), l(20.0, 22.0, "遠い")];
+        assert_eq!(heard_at(&orig, 10.2, 12.3), "猫があった");
+        // a line cut in two by the other subtitle: both halves
+        assert_eq!(heard_at(&orig, 10.0, 14.0), "猫があった\n食べた");
+        assert_eq!(heard_at(&orig, 15.0, 18.0), "");
     }
 }

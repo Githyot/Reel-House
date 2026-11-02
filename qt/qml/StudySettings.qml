@@ -92,6 +92,13 @@ Column {
             checked: ss.yes("study_wordmix_reading")
             onToggled: function(v) { ss.set("general.study_wordmix_reading", v) }
         }
+        PrefSwitch {
+            visible: ss.yes("study_wordmix")
+            title: ss.tr("Only words said in the audio")
+            subtitle: ss.tr("A word is swapped only when the subtitle in the language of the audio (built in, a file or from your addons) has it at that moment, copied as it is said there. Without that subtitle, no word is swapped.")
+            checked: ss.yes("study_wordmix_confirm")
+            onToggled: function(v) { ss.set("general.study_wordmix_confirm", v) }
+        }
     }
 
     PrefGroup {

@@ -108,6 +108,13 @@ const JA_GRAMMAR: &[&str] = &[
     "からの", "ん", "の", "こと", "もの",
 ];
 
+/// Endings written after the stem of a Japanese verb or adjective that belong to the word as it is said
+/// (`Knowledge::heard_words`).
+const JA_ENDINGS: &[&str] = &[
+    "ます", "ました", "ません", "ませんでした", "ましょう", "ない", "なかった", "なくて", "た", "だ", "て", "で", "ている", "ています", "てる",
+    "でる", "たい", "たかった", "れる", "られる", "せる", "させる", "う", "よう", "ちゃう", "ちゃった", "たら", "だら", "ば", "ねえ", "ねぇ",
+];
+
 pub fn is_kana(c: char) -> bool {
     ('\u{3041}'..='\u{309F}').contains(&c) || ('\u{30A0}'..='\u{30FF}').contains(&c)
 }
@@ -647,11 +654,47 @@ impl Knowledge {
     /// Words of a line (no punctuation). Japanese has no spaces: the longest known word at each place wins (known
     /// words, course words, particles and endings); a run of unknown kana or kanji becomes one token.
     pub fn tokens(&self, lang: &str, text: &str) -> Vec<String> {
+        self.split(lang, text).into_iter().map(|(_, w)| w).collect()
+    }
+
+    /// The words of a line in the original language as they are said there, each with its dictionary form, for
+    /// matching the subtitle in a known language with the audio (wordmix `swap_heard`). Japanese verbs and
+    /// adjectives keep the endings written after them ("あっ" + "た" -> "あった" of ある, "あり" + "ます"), and a
+    /// lone kana that is only the stem of a word ("あ" of ある) is dropped: it is far more often something else.
+    pub fn heard_words(&self, lang: &str, text: &str) -> Vec<(String, String)> {
+        let parts = self.split(lang, text);
+        if lang != "jpn" {
+            return parts;
+        }
+        let mut out: Vec<(String, String)> = vec![];
+        let mut i = 0;
+        while i < parts.len() {
+            let (mut surface, base) = parts[i].clone();
+            i += 1;
+            if surface != base && !Knowledge::grammar(lang, &base) {
+                let mut n = 0;
+                while i < parts.len() && n < 3 && JA_ENDINGS.contains(&parts[i].0.as_str()) {
+                    surface.push_str(&parts[i].0);
+                    i += 1;
+                    n += 1;
+                }
+            }
+            if surface != base && surface.chars().count() == 1 && surface.chars().all(is_kana) {
+                continue;
+            }
+            out.push((surface, base));
+        }
+        out
+    }
+
+    /// `tokens` with the text of each word as written: (written, dictionary form).
+    fn split(&self, lang: &str, text: &str) -> Vec<(String, String)> {
         if lang != "jpn" {
             return text
                 .split(|c: char| !(c.is_alphanumeric() || c == '\'' || c == '’' || c == '-'))
                 .map(|w| w.trim_matches(|c: char| c == '\'' || c == '’' || c == '-').to_lowercase())
                 .filter(|w| !w.is_empty() && !is_punct(w))
+                .map(|w| (w.clone(), w))
                 .collect();
         }
         let chars: Vec<char> = text.chars().collect();
@@ -686,14 +729,15 @@ impl Knowledge {
                     while i < chars.len() && chars[i].is_alphanumeric() && !is_cjk(chars[i]) {
                         i += 1;
                     }
-                    out.push(chars[st..i].iter().collect::<String>().to_lowercase());
+                    let w = chars[st..i].iter().collect::<String>().to_lowercase();
+                    out.push((w.clone(), w));
                 } else {
                     i += 1;
                 }
                 continue;
             }
             if let Some((len, w)) = lookup(i) {
-                out.push(w);
+                out.push((chars[i..i + len].iter().collect(), w));
                 i += len;
                 continue;
             }
@@ -709,7 +753,8 @@ impl Knowledge {
                 }
                 i += 1;
             }
-            out.push(chars[st..i].iter().collect());
+            let w: String = chars[st..i].iter().collect();
+            out.push((w.clone(), w));
         }
         out
     }
@@ -994,5 +1039,18 @@ mod tests {
         k.set_cards(vec![CardRef { id: "a:3".into(), kind: "anki".into(), front: "eat".into(), ..Default::default() }]);
         assert_eq!(k.card_for_line("I eat rice.").unwrap().id, "a:3");
         assert!(k.card_for_line("That is great!").is_none());
+    }
+
+    #[test]
+    fn words_heard_keep_their_endings() {
+        let mut k = Knowledge::default();
+        k.set_dictionary("jpn", &[("ある".into(), "verb".into()), ("食べる".into(), "verb".into()), ("猫".into(), "noun".into())], &[]);
+        let w = k.heard_words("jpn", "猫があった。食べますか？あの…");
+        assert!(w.contains(&("あった".to_string(), "ある".to_string())), "{:?}", w);
+        assert!(w.contains(&("食べます".to_string(), "食べる".to_string())), "{:?}", w);
+        assert!(w.contains(&("猫".to_string(), "猫".to_string())));
+        // a lone stem kana ("あ" of ある) is not taken for the verb
+        assert!(!w.iter().any(|(s, b)| s == "あ" && b == "ある"), "{:?}", w);
+        assert_eq!(k.heard_words("jpn", "ありません")[0], ("ありません".to_string(), "ある".to_string()));
     }
 }

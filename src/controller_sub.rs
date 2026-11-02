@@ -16,10 +16,10 @@ pub enum SubSource {
 }
 
 /// Where a built-in subtitle track is: the video's address and how to find the track inside it.
-struct EmbeddedAt {
+pub(super) struct EmbeddedAt {
     url: String,
     want: crate::mkvsubs::Want,
-    codec: String,
+    pub(super) codec: String,
 }
 
 
@@ -152,7 +152,7 @@ pub fn pick_embedded(known: &[String], tracks: &[(i64, String)], cands: Option<&
 
 /// Reads a built-in subtitle track out of the video into an SRT file in `cache` (kept: translating the same
 /// track into another language does not read the video again). `progress(0..1)` follows the bytes read.
-fn read_embedded(e: &EmbeddedAt, cache: &Path, cancel: &AtomicBool, progress: &dyn Fn(f32)) -> Result<PathBuf, String> {
+pub(super) fn read_embedded(e: &EmbeddedAt, cache: &Path, cancel: &AtomicBool, progress: &dyn Fn(f32)) -> Result<PathBuf, String> {
     if crate::mkvsubs::is_picture_codec(&e.codec) {
         return Err("This subtitle track is made of pictures (PGS/VobSub), not text, so it cannot be translated. Pick a text subtitle or one from the addons.".to_string());
     }
@@ -298,7 +298,7 @@ impl Core {
     }
 
     /// The address of the video playing and how to find the built-in subtitle track `id` in it.
-    fn embedded_at(&self, id: i64) -> Option<EmbeddedAt> {
+    pub(super) fn embedded_at(&self, id: i64) -> Option<EmbeddedAt> {
         let m = self.mpv.as_ref()?;
         let count = m.get_i64("track-list/count").unwrap_or(0);
         let mut nth = 0usize;

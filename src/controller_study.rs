@@ -19,6 +19,14 @@ impl Core {
     pub(super) fn load_study(dir: &Path) -> Collection {
         let mut c = Collection::load(dir);
         c.ensure_builtin();
+        // mined word cards get the Japanese line on the front; repeated cards of Seu Reels go (saved with the next change)
+        if c.models.iter().any(|m| m.id == super::mining::MINED) {
+            super::mining::ensure_mined(&mut c);
+        }
+        let gone = super::mining::dedupe_reels(&mut c);
+        if gone > 0 {
+            crate::debug::log("study", &format!("Seu Reels: {} repeated cards removed (the same word or line saved more than once)", gone));
+        }
         c
     }
 
@@ -112,6 +120,12 @@ impl Core {
                 self.study.toggle_mark(idx);
                 leaves = false;
             }
+            // the note of the card (and its other cards) goes to the trash
+            "delete" => {
+                let Some(nid) = self.study.cards.get(idx).map(|c| c.nid) else { return };
+                self.study.delete_note(nid, now);
+                self.toast("Card moved to the trash.");
+            }
             _ => return,
         }
         self.study_dirty += 1;
@@ -128,6 +142,7 @@ impl Core {
 
     pub fn study_undo(&mut self) {
         if let Some(idx) = self.study.undo_answer() {
+            self.jlab_undo();
             let mut xp = 0;
             if let Some(s) = self.study_session.as_mut() {
                 s.card = Some(idx);
@@ -172,6 +187,8 @@ impl Core {
         self.learn_ensure();
         self.knowledge_from_card(idx, ease);
         self.study.answer(idx, ease, now);
+        // Jlab mode: a card remembered long enough moves on (listening -> reading -> retired)
+        self.jlab_after_answer(idx);
         // the game: the combo, and XP for the same daily total, goal and streak as the Learn lessons
         let xp = self.study_session.as_mut().map(|s| s.game.answer(ease)).unwrap_or(0);
         if xp > 0 {
@@ -242,7 +259,11 @@ impl Core {
         if self.study_session.as_ref().map(|s| s.did == did).unwrap_or(false) {
             self.study_session = None;
         }
-        self.study.delete_deck(did);
+        let name = self.study.deck_name(did);
+        self.study.delete_deck(did, Self::now_secs());
+        if !name.is_empty() {
+            self.toast("Deck moved to the trash.");
+        }
         self.save_study();
         self.events.push(Event::Study);
     }
@@ -306,7 +327,53 @@ impl Core {
     }
 
     pub fn study_delete_note(&mut self, nid: i64) {
-        self.study.delete_note(nid);
+        let now = Self::now_secs();
+        // the card on screen is kept by its id: deleting moves the other cards in the list
+        let cur = self.study_session.as_ref().and_then(|s| s.card).and_then(|i| self.study.cards.get(i)).map(|c| c.id);
+        self.study.delete_note(nid, now);
+        self.study_refind_card(cur, now);
+        self.toast("Card moved to the trash.");
+        self.save_study();
+        self.events.push(Event::Study);
+    }
+
+    /// After the list of cards changed under an open review: find the card on screen again, or take the next one.
+    fn study_refind_card(&mut self, cur: Option<i64>, now: i64) {
+        let Some(did) = self.study_session.as_ref().map(|s| s.did) else { return };
+        let found = cur.and_then(|id| self.study.cards.iter().position(|c| c.id == id));
+        let card = if found.is_some() { found } else { self.study.next_card(did, now) };
+        if let Some(s) = self.study_session.as_mut() {
+            if s.card != card {
+                s.answer_shown = false;
+            }
+            s.card = card;
+        }
+    }
+
+    /// Bring back an entry of the trash (0 = the newest).
+    pub fn study_trash_restore(&mut self, i: usize) {
+        let now = Self::now_secs();
+        let cur = self.study_session.as_ref().and_then(|s| s.card).and_then(|i| self.study.cards.get(i)).map(|c| c.id);
+        match self.study.restore(i) {
+            Some(_) => {
+                self.study_refind_card(cur, now);
+                self.toast("Restored.");
+                self.save_study();
+            }
+            None => self.toast("That is no longer in the trash."),
+        }
+        self.events.push(Event::Study);
+    }
+
+    /// Delete an entry of the trash for good, or all of it (`i` = None).
+    pub fn study_trash_forget(&mut self, i: Option<usize>) {
+        match i {
+            Some(i) if i < self.study.trash.len() => {
+                self.study.trash.remove(i);
+            }
+            Some(_) => return,
+            None => self.study.trash.clear(),
+        }
         self.save_study();
         self.events.push(Event::Study);
     }
@@ -346,7 +413,8 @@ impl Core {
     }
 
     /// Plays the sound files (names in the media folder) one after the other, stopping what was playing.
-    pub fn study_play_sounds(&mut self, names: &[String]) {
+    /// `manual`: asked by a click or key (Replay), so a missing file is told; autoplay stays quiet.
+    pub fn study_play_sounds(&mut self, names: &[String], manual: bool) {
         let dir = self.study_media_dir();
         let files: Vec<String> = names.iter().filter(|n| crate::util::safe_media_name(n)).map(|n| dir.join(n)).filter(|p| p.exists()).map(|p| p.to_string_lossy().into_owned()).collect();
         if self.study_audio.is_none() {
@@ -357,6 +425,7 @@ impl Core {
                 }
                 Err(e) => {
                     crate::debug::log("study", &format!("the sound player could not start: {}", e));
+                    self.toast("The sound player could not start (mpv).");
                     return;
                 }
             }
@@ -366,6 +435,10 @@ impl Core {
             let _ = m.cmd(&["stop"]);
             if !names.is_empty() {
                 crate::debug::log("study", &format!("sound files not in the media folder: {}", names.join(", ")));
+                // Replay used to do nothing here: say why (decks pulled from AnkiWeb come without their media)
+                if manual {
+                    self.toast("This card's sound file is missing. Import the deck's .apkg (with media) to get its sounds.");
+                }
             }
             return;
         }

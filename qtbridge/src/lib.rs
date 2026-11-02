@@ -1479,7 +1479,15 @@ fn state_player(b: &Bridge, c: &Core) -> Json {
     o.push((
         "next",
         match b.next.lock().ok().and_then(|g| g.clone()) {
-            Some(nc) => Json::obj(vec![("title", s(&nc.title)), ("secondsLeft", n(nc.seconds_left)), ("thumbnail", opt(&nc.thumbnail))]),
+            Some(nc) => Json::obj(vec![
+                ("title", s(&nc.title)),
+                ("label", s(&nc.label)),
+                ("name", s(&nc.name)),
+                ("secondsLeft", n(nc.seconds_left)),
+                ("total", n(nc.total)),
+                ("thumbnail", opt(&nc.thumbnail)),
+                ("fallback", opt(&nc.fallback)),
+            ]),
             None => Json::Null,
         },
     ));
@@ -1495,6 +1503,7 @@ fn state_player(b: &Bridge, c: &Core) -> Json {
         // without subtitles
         o.push(("studyMarks", c.study_marks_json()));
         o.push(("studyQuiz", c.study_quiz_json()));
+        o.push(("studySwaps", c.study_swaps_json()));
         o.push(("studyNotice", s(&c.study_notice())));
         // the macaw's cue over the video ({n, cue, ms}: shh for a part without subtitles, peek at a mixed word)
         o.push(("studyCue", c.study_cue_json()));
@@ -1941,11 +1950,18 @@ fn run_cmd(b: &Bridge, j: &Json) -> Json {
             "study_stats" => c.study_stats_open(Some(j.get("did").as_i64().unwrap_or(0))),
             "study_stats_close" => c.study_stats_open(None),
             "study_show" => c.study_show(),
+            // Jlab mode of the Study (jlab.rs)
+            "jlab_deck" => c.jlab_deck(j.get("id").as_i64().unwrap_or(0), j.get("on").as_bool().unwrap_or(false)),
+            "jlab_set" => c.jlab_set(&j.get("key").str(), j.get("value")),
+            "jlab_lookup" => c.jlab_lookup(j.get("nid").as_i64().unwrap_or(0), &j.get("word").str()),
+            "jlab_unlook" => c.jlab_unlook(j.get("nid").as_i64().unwrap_or(0), &j.get("word").str()),
             "study_card" => c.study_card_action(&j.get("what").str(), j.get("arg").as_i64().unwrap_or(0)),
             "clip_save" => c.clip_save(j.get("start").as_f64().unwrap_or(0.0), j.get("end").as_f64().unwrap_or(0.0), j.get("text").str()),
             // study while watching (studyplay.rs): answer, close / continue, play the line again
             "study_quiz_answer" => c.study_quiz_answer(j.get("id").as_f64().unwrap_or(0.0) as u64, &j.get("answer").str()),
             "study_quiz_skip" => c.study_quiz_skip(j.get("id").as_f64().unwrap_or(0.0) as u64),
+            // the macaw's button in the player: the words swapped this episode as flashcards
+            "study_swaps_cards" => c.study_swaps_to_cards(),
             // a quiz card of the Text or Images reader: {text, lang ("" = study language), correct}
             "reader_study_answer" => c.reader_study_answer(&j.get("text").str(), &j.get("lang").str(), j.get("correct").as_bool().unwrap_or(false)),
             "study_quiz_replay" => c.study_quiz_replay(j.get("id").as_f64().unwrap_or(0.0) as u64),
@@ -2024,7 +2040,7 @@ fn run_cmd(b: &Bridge, j: &Json) -> Json {
             "extension_toggle" => c.extension_toggle(&j.get("id").str(), j.get("on").as_bool().unwrap_or(true)),
             "study_play_sounds" => {
                 let names: Vec<String> = j.get("names").items().iter().map(|x| x.str()).collect();
-                c.study_play_sounds(&names)
+                c.study_play_sounds(&names, j.get("manual").as_bool().unwrap_or(false))
             }
             "study_stop_sounds" => c.study_stop_sounds(),
             "study_set_volume" => c.study_set_volume(j.get("volume").as_f64().unwrap_or(100.0).clamp(0.0, 100.0) as u32),
@@ -2051,6 +2067,9 @@ fn run_cmd(b: &Bridge, j: &Json) -> Json {
             "study_answer" => c.study_answer(j.get("ease").as_i64().unwrap_or(0) as u8),
             "study_create_deck" => c.study_create_deck(&j.get("name").str()),
             "study_delete_deck" => c.study_delete_deck(j.get("id").as_i64().unwrap_or(0)),
+            "study_trash_restore" => c.study_trash_restore(j.get("i").as_u64().unwrap_or(u64::MAX) as usize),
+            "study_trash_forget" => c.study_trash_forget(j.get("i").as_u64().map(|i| i as usize)),
+            "study_trash_empty" => c.study_trash_forget(None),
             "study_rename_deck" => c.study_rename_deck(j.get("id").as_i64().unwrap_or(0), &j.get("name").str()),
             "study_import" => c.study_import(std::path::PathBuf::from(j.get("path").str())),
             // AnkiWeb's shared decks inside Study (state "shared")
@@ -3419,13 +3438,26 @@ fn state_study(c: &Core) -> Json {
             let card = sess.card.and_then(|i| col.cards.get(i)).map(|cd| {
                 let r = col.render_full(cd, &c.study_media_dir());
                 let (q, a) = (r.q, r.a);
+                // Jlab mode (jlab.rs): the sentence as words; a listening card plays its audio on the front,
+                // a reading card only with the answer
+                let jl = sess.card.and_then(|i| c.jlab_card_json(i, sess.answer_shown));
+                let (mut qs, mut as_) = (r.q_sounds.clone(), r.a_sounds.clone());
+                if let Some(j) = &jl {
+                    let all: Vec<String> = qs.iter().chain(as_.iter()).cloned().collect();
+                    if j.get("phase").as_i64().unwrap_or(0) == 0 {
+                        (qs, as_) = (all, vec![]);
+                    } else {
+                        (qs, as_) = (vec![], all);
+                    }
+                }
                 Json::obj(vec![
                     ("id", n(cd.id as f64)),
                     ("q", s(&q)),
                     ("a", s(&a)),
+                    ("jlab", jl.unwrap_or(Json::Null)),
                     // played by themselves when the side shows (Anki autoplay), cloze cards included
-                    ("qSounds", Json::Arr(r.q_sounds.iter().map(|x| s(x)).collect())),
-                    ("aSounds", Json::Arr(r.a_sounds.iter().map(|x| s(x)).collect())),
+                    ("qSounds", Json::Arr(qs.iter().map(|x| s(x)).collect())),
+                    ("aSounds", Json::Arr(as_.iter().map(|x| s(x)).collect())),
                     ("clip", r.clip.as_deref().map(s).unwrap_or(Json::Null)),
                     ("kind", s(match cd.kind { 0 => "new", 2 => "review", _ => "learn" })),
                     ("flag", n(cd.flag as f64)),
@@ -3436,6 +3468,15 @@ fn state_study(c: &Core) -> Json {
                     ("nid", n(cd.nid as f64)),
                     ("mid", n(col.notes.iter().find(|x| x.id == cd.nid).map(|x| x.mid).unwrap_or(0) as f64)),
                     ("fields", Json::Arr(col.notes.iter().find(|x| x.id == cd.nid).map(|x| x.fields.iter().map(|f| s(f)).collect()).unwrap_or_default())),
+                    // the hiragana / katakana box of the review (KanaHover.js): [word, reading] and [kanji, meaning; on; kun]
+                    ("readings", {
+                        let fields = col.notes.iter().find(|x| x.id == cd.nid).map(|x| x.fields.clone()).unwrap_or_default();
+                        let (w, k) = reelhouse::study::card_readings(&fields, &format!("{} {}", q, a));
+                        Json::obj(vec![
+                            ("words", Json::Arr(w.iter().map(|(x, y)| Json::Arr(vec![s(x), s(y)])).collect())),
+                            ("kanji", Json::Arr(k.iter().map(|(x, y)| Json::Arr(vec![s(&x.to_string()), s(y)])).collect())),
+                        ])
+                    }),
                 ])
             });
             Json::obj(vec![
@@ -3541,7 +3582,22 @@ fn state_study(c: &Core) -> Json {
     };
     // the game of Study (XP and goal shared with Learn, streak, the combo of the review): StudyReview / StudyPage
     let game = c.study_game_json();
-    let j = Json::obj(vec![("decks", Json::Arr(rows)), ("session", session), ("importing", Json::Bool(c.study_importing)), ("ankiweb", ankiweb), ("models", Json::Arr(models)), ("browse", browse), ("stats", stats), ("game", game)]);
+    // the trash: what was deleted lately, newest first (StudyTrash.qml)
+    let trash: Vec<Json> = col
+        .trash
+        .iter()
+        .map(|t| {
+            Json::obj(vec![
+                ("at", n(t.at as f64)),
+                ("kind", s(&t.kind)),
+                ("label", s(&t.label)),
+                ("deck", s(&t.deck)),
+                ("cards", n(t.cards.len() as f64)),
+                ("decks", n(t.decks.len() as f64)),
+            ])
+        })
+        .collect();
+    let j = Json::obj(vec![("decks", Json::Arr(rows)), ("session", session), ("jlab", c.jlab_state()), ("importing", Json::Bool(c.study_importing)), ("ankiweb", ankiweb), ("models", Json::Arr(models)), ("browse", browse), ("stats", stats), ("game", game), ("trash", Json::Arr(trash))]);
     // it runs on the GUI thread at each Study refresh: write it down when it is slow (or the first time)
     static FIRST: std::sync::Once = std::sync::Once::new();
     let ms = started.elapsed().as_secs_f64() * 1000.0;

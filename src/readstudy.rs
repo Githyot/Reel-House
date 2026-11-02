@@ -176,7 +176,7 @@ mod tests {
 
     #[test]
     fn mixed_spans_become_pieces() {
-        let sp = Span { start: 2, end: 3, word: "猫".into(), original: "gato".into(), reading: "ねこ".into() };
+        let sp = Span { start: 2, end: 3, word: "猫".into(), original: "gato".into(), reading: "ねこ".into(), base: String::new() };
         let mut out = vec![Piece::Text("Um ".into())];
         from_wordmix(vec![("O ".into(), None), ("猫".into(), Some(sp)), (" dorme.".into(), None)], &mut out);
         assert_eq!(out, vec![Piece::Text("Um O ".into()), Piece::Swap { word: "猫".into(), reading: "ねこ".into(), original: "gato".into() }, Piece::Text(" dorme.".into())]);

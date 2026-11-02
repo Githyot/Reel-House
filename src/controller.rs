@@ -59,6 +59,8 @@ mod controller_novels;
 mod controller_study;
 #[path = "controller_clip.rs"]
 mod controller_clip;
+#[path = "controller_jlab.rs"]
+mod controller_jlab;
 #[path = "controller_ext.rs"]
 mod controller_ext;
 #[path = "controller_autocards.rs"]
@@ -313,6 +315,8 @@ pub enum Msg {
     /// the collection already read on the worker thread, and AnkiWeb's message
     AnkiWebPulled(Result<(crate::study::AnkiDb, String), String>),
     ClipDone(Result<controller_clip::ClipResult, String>),
+    /// A word of a Jlab card looked up (note id, word, what the dictionary gave)
+    JlabLooked(i64, String, Option<crate::jlab::Look>),
     /// A moment of the episode was cut for a mined card (mining.rs): the player session, the clip.
     Mined(u64, Result<mining::Mined, String>),
     /// A Learn course pack read on a worker thread: its language and the pack.
@@ -339,6 +343,8 @@ pub enum Msg {
     DlSibling(Box<MetaItem>, i64, i64, Option<Box<Stream>>),
     DlSiblingsDone(usize, usize),
     Forced(u64, Result<Forced, String>),
+    /// The subtitle in the language of the audio for word mixing: (episode key, where from, the file).
+    OrigSubs(String, String, Result<PathBuf, String>),
     /// The automatic sync of an external audio track: session token, file, result.
     AudioSync(u64, String, Result<crate::audiosync::Match, String>),
     /// The sync of the subtitle with the speech (crate::subsync): session token, asked by itself, result.
@@ -541,6 +547,10 @@ pub struct Core {
     pub novel_reader: Option<NovelReader>,
     pub study: crate::study::Collection,
     pub study_session: Option<controller_study::StudySession>,
+    /// Jlab mode of the Study (jlab.rs): decks in it, settings, per-note phase and lookups
+    pub jlab: crate::jlab::Jlab,
+    /// the word being looked up for a Jlab card ("" = none)
+    pub jlab_busy: String,
     /// What the user knows of the study language (knowledge.md), read by the player quizzes and Study.
     pub knowledge: crate::knowledge::Knowledge,
     /// The Learn area (Duolingo-style lessons): its course, progress and the lesson in progress.
@@ -824,8 +834,26 @@ fn resolve_stream(
 #[derive(Clone, Debug)]
 pub struct NextCard {
     pub title: String,
+    /// "S02E08"
+    pub label: String,
+    /// the episode's own name ("" when it has none)
+    pub name: String,
     pub seconds_left: f64,
+    /// how long the card shows in all (the countdown bar runs from this to 0)
+    pub total: f64,
     pub thumbnail: Option<String>,
+    /// the series' backdrop or poster, shown when the episode has no picture or its address fails
+    pub fallback: Option<String>,
+}
+
+/// The episode after the one playing (see `next_video`).
+struct NextVideo {
+    id: String,
+    label: String,
+    title: String,
+    name: String,
+    thumbnail: Option<String>,
+    fallback: Option<String>,
 }
 
 /// One entry of "Continue watching".
@@ -1043,7 +1071,7 @@ impl Core {
     // ----- next episode -----
 
     /// The video after the one playing, in season and episode order.
-    fn next_video(&self) -> Option<(String, String, String, Option<String>)> {
+    fn next_video(&self) -> Option<NextVideo> {
         let s = self.session.as_ref()?;
         let d = self.detail.as_ref()?;
         if !d.meta.is_series() {
@@ -1055,7 +1083,8 @@ impl Core {
         let n = vids.get(i + 1)?;
         let label = format!("S{:02}E{:02}", n.season.unwrap_or(0), n.episode.unwrap_or(0));
         let title = if n.title.is_empty() { format!("{} {}", d.meta.name, label) } else { format!("{} · {}", label, n.title) };
-        Some((n.id.clone(), label, title, n.thumbnail.clone()))
+        let fallback = d.meta.background.clone().or_else(|| d.meta.poster.clone()).filter(|u| !u.is_empty());
+        Some(NextVideo { id: n.id.clone(), label, title, name: n.title.clone(), thumbnail: n.thumbnail.clone().filter(|u| !u.is_empty()), fallback })
     }
 
     /// Runs on every tick: counts watched episodes, and returns the "next episode" card when it is time.
@@ -1089,7 +1118,7 @@ impl Core {
         if !autoplay_next || dur < 60.0 {
             return None;
         }
-        let (id, label, title, thumb) = self.next_video()?;
+        let NextVideo { id, label, title, name, thumbnail, fallback } = self.next_video()?;
         let left = (dur - pos).max(0.0);
         // Five minutes before the end the next episode starts loading quietly.
         if left <= 300.0 && !prefetch_started {
@@ -1098,7 +1127,7 @@ impl Core {
             }
             self.start_prefetch(&id);
         }
-        if (eof || left < 1.0) && !started {
+        if (eof || left < 1.0) && !started && !self.study_quiz_open() {
             if let Some(s) = self.session.as_mut() {
                 s.next_started = true;
             }
@@ -1107,7 +1136,7 @@ impl Core {
             return None;
         }
         if left <= next_popup_secs as f64 && !dismissed && !started {
-            return Some(NextCard { title, seconds_left: left, thumbnail: thumb });
+            return Some(NextCard { title, label, name, seconds_left: left, total: (next_popup_secs as f64).max(1.0), thumbnail, fallback });
         }
         None
     }
@@ -1120,7 +1149,7 @@ impl Core {
 
     /// "Play now" on the next-episode card, or the next button of the player.
     pub fn play_next_now(&mut self) {
-        if let Some((id, label, title, _)) = self.next_video() {
+        if let Some(NextVideo { id, label, title, .. }) = self.next_video() {
             if let Some(s) = self.session.as_mut() {
                 s.next_started = true;
             }
@@ -1623,6 +1652,8 @@ impl Core {
             novel_list: MangaList::new(),
             study: Core::load_study(&pdir),
             study_session: None,
+            jlab: crate::jlab::Jlab::load(&pdir),
+            jlab_busy: String::new(),
             knowledge: crate::knowledge::Knowledge::load_from(&crate::study::dir(&pdir).join("knowledge.md")),
             learn: controller_learn::LearnState::default(),
             shared: Default::default(),
@@ -2531,6 +2562,7 @@ impl Core {
             Msg::AutocardTested(r) => self.events.push(Event::Info(MsgKind::Autocards, r.unwrap_or_else(|e| e))),
             Msg::AnkiWebPulled(r) => self.on_ankiweb_pulled(r),
             Msg::ClipDone(r) => self.on_clip_done(r),
+            Msg::JlabLooked(nid, w, r) => self.on_jlab_looked(nid, w, r),
             Msg::Mined(session, r) => self.on_mined(session, r),
             Msg::LearnPack(lang, r) => self.on_learn_pack(lang, r),
             Msg::SharedList(g, w, r) => self.on_shared_list(g, w, r),
@@ -2552,6 +2584,7 @@ impl Core {
             Msg::DlSibling(m, s, e, st) => self.on_dl_sibling(*m, s, e, st.map(|b| *b)),
             Msg::DlSiblingsDone(f, t) => self.on_dl_siblings_done(f, t),
             Msg::Forced(t, r) => self.on_forced(t, r),
+            Msg::OrigSubs(k, f, r) => self.on_orig_subs(k, f, r),
             Msg::AudioSync(t, p, r) => self.on_audio_sync(t, p, r),
             Msg::SubSync(t, a, r) => self.on_sub_sync(t, a, r),
             Msg::DubFound(t, g, l, lang, r) => self.on_dub_found(t, g, l, lang, r),
@@ -3122,6 +3155,7 @@ impl Core {
             }
             return;
         };
+        let quiz_open = self.study_quiz_open();
         let st = &self.settings;
         let target = st.target_lang(&self.system_lang);
         let shaders_dir = self.rt.shaders_dir.clone();
@@ -3266,7 +3300,8 @@ impl Core {
         }
 
         // Automatic skipping of openings and endings.
-        if s.stage == Stage::Playing && st.anime_skip.auto_skip && !s.segments.is_empty() {
+        // (not while a question of the macaw holds the episode: it skips once the question is closed)
+        if s.stage == Stage::Playing && st.anime_skip.auto_skip && !s.segments.is_empty() && !quiz_open {
             let pos = mpv.get_f64("time-pos").unwrap_or(0.0);
             let dur = mpv.get_f64("duration").unwrap_or(0.0);
             if let Some(seg) = animeskip::segment_at(&s.segments, pos, dur) {

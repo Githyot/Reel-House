@@ -88,6 +88,27 @@ pub struct Collection {
     pub history: Vec<[i64; 4]>,
     /// what the last answer changed, for Undo (not saved)
     pub undo: Option<Undo>,
+    /// what was deleted lately, newest first, so it can come back (kept TRASH_DAYS days, at most TRASH_MAX entries)
+    pub trash: Vec<Trashed>,
+}
+
+pub const TRASH_DAYS: i64 = 30;
+pub const TRASH_MAX: usize = 200;
+
+/// A deleted note (with its cards) or deck (with the decks, notes and cards under it), as it was.
+#[derive(Clone, Debug, Default)]
+pub struct Trashed {
+    /// unix seconds of the deletion
+    pub at: i64,
+    /// "note" or "deck"
+    pub kind: String,
+    /// what the list shows: the deck name, or the front of the note
+    pub label: String,
+    /// the deck the note was in (by name), to put it back when that deck went away too
+    pub deck: String,
+    pub decks: Vec<Deck>,
+    pub notes: Vec<Note>,
+    pub cards: Vec<Card>,
 }
 
 #[derive(Clone, Debug)]
@@ -165,6 +186,27 @@ impl Collection {
             ("hist", Json::Arr(self.history.iter().map(|h| Json::Arr(h.iter().map(|x| n(*x)).collect())).collect())),
             ("day", n(self.day)),
             ("done", Json::Arr(self.done.iter().map(|(k, v)| Json::Arr(vec![n(*k), n(v.0 as i64), n(v.1 as i64)])).collect())),
+            (
+                "trash",
+                Json::Arr(
+                    self.trash
+                        .iter()
+                        .map(|t| {
+                            let part = Collection { decks: t.decks.clone(), notes: t.notes.clone(), cards: t.cards.clone(), ..Collection::default() };
+                            let pj = part.to_json();
+                            Json::obj(vec![
+                                ("at", n(t.at)),
+                                ("kind", t.kind.as_str().into()),
+                                ("label", t.label.as_str().into()),
+                                ("deck", t.deck.as_str().into()),
+                                ("decks", pj.get("decks").clone()),
+                                ("notes", pj.get("notes").clone()),
+                                ("cards", pj.get("cards").clone()),
+                            ])
+                        })
+                        .collect(),
+                ),
+            ),
         ])
     }
 
@@ -195,6 +237,11 @@ impl Collection {
         c.day = j.get("day").as_i64().unwrap_or(0);
         for r in j.get("done").items() {
             c.done.insert(r.at(0).as_i64().unwrap_or(0), (r.at(1).as_i64().unwrap_or(0) as u32, r.at(2).as_i64().unwrap_or(0) as u32));
+        }
+        for t in j.get("trash").items() {
+            // the parts are stored like a collection of their own
+            let part = Collection::from_json(t);
+            c.trash.push(Trashed { at: t.get("at").as_i64().unwrap_or(0), kind: t.get("kind").str(), label: t.get("label").str(), deck: t.get("deck").str(), decks: part.decks, notes: part.notes, cards: part.cards });
         }
         c
     }
@@ -372,12 +419,22 @@ impl Collection {
         true
     }
 
-    pub fn delete_deck(&mut self, did: i64) {
+    /// Delete a deck and the decks under it; it goes to the trash with its cards and notes.
+    pub fn delete_deck(&mut self, did: i64, now: i64) {
         let ids = self.deck_ids(did);
-        self.cards.retain(|c| !ids.contains(&c.did));
-        self.decks.retain(|d| !ids.contains(&d.id));
+        if ids.is_empty() {
+            return;
+        }
+        let label = self.deck_name(did);
+        let (gone, kept): (Vec<Card>, Vec<Card>) = std::mem::take(&mut self.cards).into_iter().partition(|c| ids.contains(&c.did));
+        self.cards = kept;
+        let (decks, keep_decks): (Vec<Deck>, Vec<Deck>) = std::mem::take(&mut self.decks).into_iter().partition(|d| ids.contains(&d.id));
+        self.decks = keep_decks;
         let live: std::collections::HashSet<i64> = self.cards.iter().map(|c| c.nid).collect();
-        self.notes.retain(|x| live.contains(&x.id));
+        let (keep_notes, notes): (Vec<Note>, Vec<Note>) = std::mem::take(&mut self.notes).into_iter().partition(|x| live.contains(&x.id));
+        self.notes = keep_notes;
+        self.undo = None;
+        self.to_trash(Trashed { at: now, kind: "deck".into(), label, deck: String::new(), decks, notes, cards: gone }, now);
     }
 
     /// (new, learning, review) to do in a deck (and the decks under it) now.
@@ -734,9 +791,92 @@ impl Collection {
         Ok(())
     }
 
-    pub fn delete_note(&mut self, nid: i64) {
+    /// Delete a note and its cards; they go to the trash.
+    pub fn delete_note(&mut self, nid: i64, now: i64) {
+        let (cards, kept): (Vec<Card>, Vec<Card>) = std::mem::take(&mut self.cards).into_iter().partition(|c| c.nid == nid);
+        self.cards = kept;
+        let (notes, kept): (Vec<Note>, Vec<Note>) = std::mem::take(&mut self.notes).into_iter().partition(|x| x.id == nid);
+        self.notes = kept;
+        if cards.is_empty() && notes.is_empty() {
+            return;
+        }
+        self.undo = None;
+        let front = notes.first().and_then(|x| x.fields.first()).map(|f| strip_tags(f)).unwrap_or_default();
+        let mut label: String = front.split_whitespace().collect::<Vec<_>>().join(" ");
+        if label.chars().count() > 80 {
+            label = label.chars().take(79).collect::<String>() + "…";
+        }
+        let deck = cards.first().map(|c| self.deck_name(c.did)).unwrap_or_default();
+        self.to_trash(Trashed { at: now, kind: "note".into(), label, deck, decks: Vec::new(), notes, cards }, now);
+    }
+
+    /// Delete a note and its cards for good, without the trash (repeated cards the app removes by itself).
+    pub fn purge_note(&mut self, nid: i64) {
         self.cards.retain(|c| c.nid != nid);
         self.notes.retain(|x| x.id != nid);
+        self.undo = None;
+    }
+
+    fn to_trash(&mut self, t: Trashed, now: i64) {
+        self.trash.insert(0, t);
+        self.trash.retain(|t| now - t.at < TRASH_DAYS * 86400);
+        self.trash.truncate(TRASH_MAX);
+    }
+
+    /// Put an entry of the trash back. A deck whose name is taken now comes back as "Name (restored)"; the cards of a
+    /// note whose deck is gone go to a deck of that name again (made when needed). Returns what came back.
+    pub fn restore(&mut self, i: usize) -> Option<String> {
+        if i >= self.trash.len() {
+            return None;
+        }
+        let mut t = self.trash.remove(i);
+        if !t.decks.is_empty() {
+            // the top deck is the one with the shortest name; the others are under it
+            let top = t.decks.iter().map(|d| d.name.clone()).min_by_key(|n| n.len()).unwrap_or_default();
+            if t.decks.iter().any(|d| self.decks.iter().any(|y| y.name == d.name)) {
+                let mut k = 1;
+                let fresh = loop {
+                    let cand = if k == 1 { format!("{} (restored)", top) } else { format!("{} (restored {})", top, k) };
+                    let pre = format!("{}::", cand);
+                    if !self.decks.iter().any(|y| y.name == cand || y.name.starts_with(&pre)) {
+                        break cand;
+                    }
+                    k += 1;
+                };
+                let pre = format!("{}::", top);
+                for d in t.decks.iter_mut() {
+                    if d.name == top {
+                        d.name = fresh.clone();
+                    } else if let Some(rest) = d.name.strip_prefix(&pre) {
+                        d.name = format!("{}::{}", fresh, rest);
+                    }
+                }
+            }
+            for d in t.decks.iter_mut() {
+                while self.decks.iter().any(|y| y.id == d.id) {
+                    d.id += 1;
+                }
+            }
+        }
+        // cards whose deck no longer exists
+        let have: std::collections::HashSet<i64> = self.decks.iter().map(|d| d.id).chain(t.decks.iter().map(|d| d.id)).collect();
+        if t.cards.iter().any(|c| !have.contains(&c.did)) {
+            let name = if t.deck.is_empty() { "Default".to_string() } else { t.deck.clone() };
+            let did = match self.decks.iter().find(|d| d.name == name) {
+                Some(d) => d.id,
+                None => self.create_deck(&name).unwrap_or(0),
+            };
+            for c in t.cards.iter_mut().filter(|c| !have.contains(&c.did)) {
+                c.did = did;
+            }
+        }
+        let label = t.label.clone();
+        self.decks.extend(t.decks);
+        let known: std::collections::HashSet<i64> = self.notes.iter().map(|x| x.id).collect();
+        self.notes.extend(t.notes.into_iter().filter(|x| !known.contains(&x.id)));
+        let known: std::collections::HashSet<i64> = self.cards.iter().map(|c| c.id).collect();
+        self.cards.extend(t.cards.into_iter().filter(|c| !known.contains(&c.id)));
+        Some(label)
     }
 
     /// Cards of a deck (and its sub decks) whose text has every word of the query, as (card index).
@@ -980,6 +1120,11 @@ impl Collection {
     }
 }
 
+/// The text of a field without its HTML tags.
+pub fn strip_html(s: &str) -> String {
+    strip_tags(s)
+}
+
 fn strip_tags(s: &str) -> String {
     let mut out = String::new();
     let mut inside = false;
@@ -1094,6 +1239,9 @@ fn fill(tpl: &str, cx: &Ctx) -> String {
                     String::new()
                 } else if filters.split(':').any(|f| f == "text") {
                     strip_tags(&raw)
+                } else if let Some(f) = filters.split(':').find(|f| ["furigana", "kana", "kanji"].contains(f)) {
+                    // Anki's 漢字[かんじ] filters; the review shows the kanji and its reading on hover (Qt has no <ruby>)
+                    furigana(&raw, f == "kana")
                 } else {
                     raw
                 }
@@ -1104,6 +1252,118 @@ fn fill(tpl: &str, cx: &Ctx) -> String {
     }
     out.push_str(rest);
     out
+}
+
+fn furi_re() -> &'static regex::Regex {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| regex::Regex::new(r" ?([^ >\[\]]+?)\[([^\]]+)\]").unwrap())
+}
+
+fn ruby_re() -> &'static regex::Regex {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| regex::Regex::new(r"(?is)<ruby>(?:<rb>)?([^<]*)(?:</rb>)?(?:<rp>[^<]*</rp>)?<rt>([^<]*)</rt>(?:<rp>[^<]*</rp>)?</ruby>").unwrap())
+}
+
+/// Anki's furigana syntax (`漢字[かんじ]`, a space before the word ends the text before it): the kanji, or the kana.
+pub fn furigana(text: &str, kana: bool) -> String {
+    furi_re().replace_all(text, if kana { "$2" } else { "$1" }).into_owned()
+}
+
+/// The readings a card knows, for the hiragana / katakana box of the review (KanaHover.js): the furigana of its fields
+/// (`漢字[かんじ]`, `<ruby>`), a short word field paired with the kana field after it (Word / Word Reading), and a kanji
+/// with okurigana read from the kanji table (一つ = ひとつ). `kanji` gives each kanji its meaning and on / kun readings.
+#[allow(clippy::type_complexity)]
+pub fn card_readings(fields: &[String], text: &str) -> (Vec<(String, String)>, Vec<(char, String)>) {
+    let mut words: Vec<(String, String)> = Vec::new();
+    let add = |w: &str, r: &str, words: &mut Vec<(String, String)>| {
+        let w = w.trim();
+        let start = w.char_indices().find(|(_, c)| crate::kanji::is_kanji(*c)).map(|(i, _)| i);
+        let Some(start) = start else { return };
+        let w = &w[start..];
+        let r = crate::kanji::to_hiragana(r.split([',', '|', ';']).next().unwrap_or("").trim());
+        if r.is_empty() || !r.chars().all(is_kana) || words.iter().any(|(x, _)| x == w) {
+            return;
+        }
+        words.push((w.to_string(), r));
+    };
+    for f in fields {
+        let t = strip_tags(f);
+        // 勉[べん] 強[きょう]: kanji written one by one also make the whole word (勉強 = べんきょう)
+        let (mut chain, mut chain_r, mut end) = (String::new(), String::new(), usize::MAX);
+        for c in furi_re().captures_iter(&t) {
+            let m = c.get(0).unwrap();
+            add(&c[1], &c[2], &mut words);
+            let all_kanji = c[1].chars().all(crate::kanji::is_kanji);
+            if m.start() != end || !all_kanji {
+                if chain.chars().count() > 1 {
+                    add(&chain, &chain_r, &mut words);
+                }
+                chain.clear();
+                chain_r.clear();
+            }
+            if all_kanji {
+                chain.push_str(&c[1]);
+                chain_r.push_str(&c[2]);
+            }
+            end = m.end();
+        }
+        if chain.chars().count() > 1 {
+            add(&chain, &chain_r, &mut words);
+        }
+        for c in ruby_re().captures_iter(f) {
+            add(&strip_tags(&c[1]), &strip_tags(&c[2]), &mut words);
+        }
+    }
+    let plain: Vec<String> = fields.iter().map(|f| strip_tags(f).trim().to_string()).collect();
+    if let Some(i) = plain.iter().position(|w| has_kanji(w) && w.chars().count() <= 12 && !w.contains(char::is_whitespace) && !w.contains('[')) {
+        if let Some(r) = plain[i + 1..].iter().find(|r| !r.is_empty() && r.chars().count() <= 24 && r.chars().all(is_kana)) {
+            add(&plain[i].clone(), &r.clone(), &mut words);
+        }
+    }
+    let all = format!("{} {}", plain.join(" "), strip_tags(text));
+    for (run, oku) in crate::kanji::candidates(&all) {
+        if run.chars().count() != 1 || oku == run || words.iter().any(|(x, _)| *x == oku) {
+            continue;
+        }
+        let Some(k) = run.chars().next().and_then(crate::kanji::info) else { continue };
+        let tail = &oku[run.len()..];
+        // the longest okurigana of the table that the word starts with: 一つ = ひと.つ
+        let found = k.kun.iter().filter_map(|y| y.trim_matches('-').split_once('.')).filter(|(_, t)| tail.starts_with(t)).max_by_key(|(_, t)| t.len());
+        if let Some((stem, t)) = found {
+            add(&format!("{}{}", run, t), &format!("{}{}", stem, t), &mut words);
+        }
+    }
+    let kanji = crate::kanji::kanji_of(&all)
+        .into_iter()
+        .filter_map(|c| {
+            let k = crate::kanji::info(c)?;
+            let mut parts: Vec<String> = Vec::new();
+            if !k.meanings.is_empty() {
+                parts.push(k.meanings.iter().take(3).cloned().collect::<Vec<_>>().join(", "));
+            }
+            if !k.on.is_empty() {
+                parts.push(format!("音 {}", k.on.iter().take(4).map(|x| crate::kanji::to_katakana(x)).collect::<Vec<_>>().join("、")));
+            }
+            if !k.kun.is_empty() {
+                parts.push(format!("訓 {}", k.kun.iter().take(4).map(|x| kun_text(x)).collect::<Vec<_>>().join("、")));
+            }
+            Some((c, parts.join("; ")))
+        })
+        .collect();
+    (words, kanji)
+}
+
+fn is_kana(c: char) -> bool {
+    ('\u{3041}'..='\u{3096}').contains(&c) || ('\u{30a1}'..='\u{30fa}').contains(&c) || c == 'ー'
+}
+
+/// ひと.つ = ひと(つ); -ひと = ひと
+fn kun_text(k: &str) -> String {
+    let k = k.trim_matches('-');
+    match k.split_once('.') {
+        Some((a, b)) => format!("{}({})", a, b),
+        None => k.to_string(),
+    }
 }
 
 /// The sound files of a side, in order (`[sound:name]` of Anki).
@@ -1165,7 +1425,13 @@ fn clean(html: &str, media: &Path) -> String {
     out.push_str(rest);
     // a link to a clip kept in the media folder
     let slash = if base.starts_with('/') { "" } else { "/" };
-    out.replace("href=\"clip:", &format!("href=\"file://{}{}/", slash, base))
+    let out = out.replace("href=\"clip:", &format!("href=\"file://{}{}/", slash, base));
+    // Qt's rich text has no <ruby>: the word shows alone, its reading comes on hover (card_readings)
+    let out = ruby_re().replace_all(&out, "$1");
+    // a field with Anki's furigana shown without the filter (日本[にほん] 語[ご]): only the kanji, the reading on hover
+    furi_re()
+        .replace_all(&out, |c: &regex::Captures| if has_kanji(&c[1]) && c[2].chars().all(is_kana) { c[1].to_string() } else { c[0].to_string() })
+        .into_owned()
 }
 
 impl Collection {
@@ -1260,19 +1526,24 @@ pub fn import_apkg(col: &mut Collection, bytes: &[u8], data: &Path) -> Result<Im
     };
     let dbbytes = zip.read(dbname)?;
     let out = import_db(col, &dbbytes, false)?;
-    // media: a JSON map "0" -> "file.jpg", the files stored under their numbers
-    if let Ok(map_text) = zip.read_text("media") {
-        if let Ok(map) = Json::parse(&map_text) {
-            let md = media_dir(data);
-            let _ = std::fs::create_dir_all(&md);
-            for (num, name) in map.entries() {
-                let Some(name) = name.as_str() else { continue };
-                if !crate::util::safe_media_name(name) {
-                    continue;
-                }
-                if let Ok(b) = zip.read(num) {
-                    let _ = std::fs::write(md.join(name), b);
-                }
+    // media: a JSON map "0" -> "file.jpg", the files stored under their numbers. Packages of newer Anki versions
+    // keep the map as protobuf (MediaEntries) and every file zstd-compressed: both are read too, so the sounds of
+    // such decks are not lost (Replay did nothing for them).
+    if let Ok(raw) = zip.read("media") {
+        let raw = crate::ankiweb::decompress(&raw).unwrap_or(raw);
+        let names: Vec<(String, String)> = match std::str::from_utf8(&raw).ok().and_then(|t| Json::parse(t).ok()) {
+            Some(map) => map.entries().iter().filter_map(|(k, v)| v.as_str().map(|n| (k.to_string(), n.to_string()))).collect(),
+            None => media_entries_pb(&raw).into_iter().enumerate().map(|(i, n)| (i.to_string(), n)).collect(),
+        };
+        let md = media_dir(data);
+        let _ = std::fs::create_dir_all(&md);
+        for (num, name) in names {
+            if !crate::util::safe_media_name(&name) {
+                continue;
+            }
+            if let Ok(b) = zip.read(&num) {
+                let b = crate::ankiweb::decompress(&b).unwrap_or(b);
+                let _ = std::fs::write(md.join(&name), b);
             }
         }
     }
@@ -1280,6 +1551,56 @@ pub fn import_apkg(col: &mut Collection, bytes: &[u8], data: &Path) -> Result<Im
         return Err("Nothing new in this package (it may be already imported).".into());
     }
     Ok(out)
+}
+
+/// The file names of a protobuf `MediaEntries` (newer `.apkg`): field 1 repeated entries, each with the name in
+/// field 1. The n-th entry is stored in the package as the file "n".
+fn media_entries_pb(b: &[u8]) -> Vec<String> {
+    fn varint(b: &[u8], i: &mut usize) -> Option<u64> {
+        let mut v = 0u64;
+        for shift in (0..64).step_by(7) {
+            let x = *b.get(*i)?;
+            *i += 1;
+            v |= ((x & 0x7f) as u64) << shift;
+            if x & 0x80 == 0 {
+                return Some(v);
+            }
+        }
+        None
+    }
+    // (field, wire type, payload) of each field of a message; varints and fixed fields are skipped over
+    fn fields(b: &[u8]) -> Vec<(u64, &[u8])> {
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < b.len() {
+            let Some(key) = varint(b, &mut i) else { break };
+            match key & 7 {
+                0 => {
+                    if varint(b, &mut i).is_none() {
+                        break;
+                    }
+                }
+                1 => i += 8,
+                2 => {
+                    let Some(len) = varint(b, &mut i) else { break };
+                    let end = i.saturating_add(len as usize);
+                    if end > b.len() {
+                        break;
+                    }
+                    out.push((key >> 3, &b[i..end]));
+                    i = end;
+                }
+                5 => i += 4,
+                _ => break,
+            }
+        }
+        out
+    }
+    fields(b)
+        .into_iter()
+        .filter(|(f, _)| *f == 1)
+        .map(|(_, entry)| fields(entry).into_iter().find(|(f, _)| *f == 1).map(|(_, n)| String::from_utf8_lossy(n).into_owned()).unwrap_or_default())
+        .collect()
 }
 
 /// An Anki collection file read into memory (see `parse_db`), ready to be added to a collection with `merge_db`.
@@ -1444,6 +1765,24 @@ mod tests {
         let h = idx.iter().find(|h| h.term == "学校").unwrap();
         assert_eq!((h.reading.as_str(), h.meaning.as_str()), ("がっこう", "school"));
         assert!(idx.iter().any(|h| h.term == "勉強" && h.meaning == "study"));
+    }
+
+    #[test]
+    fn readings_for_the_kana_box() {
+        assert_eq!(furigana("私[わたし]は 学校[がっこう]に 行[い]く", false), "私は学校に行く");
+        assert_eq!(furigana("私[わたし]は 学校[がっこう]", true), "わたしはがっこう");
+        let f = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        // Kaishi-like note: Word, Word Reading, Word Meaning, Sentence, Sentence Furigana
+        let (w, k) = card_readings(&f(&["私", "わたし", "I; me", "私はアンです。", "私[わたし]はアンです。"]), "一つください");
+        assert!(w.contains(&("私".to_string(), "わたし".to_string())));
+        assert!(w.contains(&("一つ".to_string(), "ひとつ".to_string())), "{:?}", w);
+        assert!(k.iter().any(|(c, t)| *c == '私' && t.contains("訓")), "{:?}", k);
+        let (w, _) = card_readings(&f(&["日本[にほん] 語[ご]を 勉[べん] 強[きょう]する"]), "");
+        assert!(w.contains(&("日本語".to_string(), "にほんご".to_string())) && w.contains(&("勉強".to_string(), "べんきょう".to_string())), "{:?}", w);
+        let (w, _) = card_readings(&f(&["<ruby>漢字<rt>かんじ</rt></ruby>"]), "");
+        assert_eq!(w, vec![("漢字".to_string(), "かんじ".to_string())]);
+        assert!(!clean("<ruby>漢字<rt>かんじ</rt></ruby>", Path::new("/m")).contains("かんじ"));
+        assert_eq!(clean("日本[にほん] 語[ご]を 勉[べん] 強[きょう]する [x]", Path::new("/m")), "日本語を勉強する [x]");
     }
 
     #[test]
@@ -1726,8 +2065,41 @@ mod tests2 {
         let st = col.stats(did, now);
         assert_eq!((st.today, st.today_again), (2, 1));
         assert_eq!(st.new, 5);
-        col.delete_note(nid);
+        col.delete_note(nid, now);
         assert_eq!(col.cards.iter().filter(|c| c.nid == nid).count(), 0);
+        assert_eq!(col.trash.len(), 1);
+        // back from the trash, and it survives a save
+        let back = Collection::from_json(&col.to_json());
+        assert_eq!(back.trash.len(), 1);
+        assert_eq!(back.trash[0].cards.len(), 3);
+        col.restore(0).unwrap();
+        assert_eq!(col.cards.iter().filter(|c| c.nid == nid).count(), 3);
+        assert!(col.trash.is_empty());
+        // a whole deck: gone, then back under a new name when the old one was taken meanwhile
+        let name = col.deck_name(did);
+        col.delete_deck(did, now);
+        assert!(col.decks.iter().all(|d| d.id != did));
+        assert_eq!(col.cards.iter().filter(|c| c.nid == nid).count(), 0);
+        col.create_deck(&name).unwrap();
+        col.restore(0).unwrap();
+        assert!(col.decks.iter().any(|d| d.name == format!("{} (restored)", name)));
+        assert_eq!(col.cards.iter().filter(|c| c.nid == nid).count(), 3);
+    }
+}
+
+#[cfg(test)]
+mod tests_media_pb {
+    #[test]
+    fn reads_media_entries() {
+        // MediaEntries { entries: [ {name: "a.mp3", size: 3}, {name: "b.jpg"} ] }
+        let e1 = [0x0a, 5, b'a', b'.', b'm', b'p', b'3', 0x10, 3];
+        let e2 = [0x0a, 5, b'b', b'.', b'j', b'p', b'g'];
+        let mut b = vec![0x0a, e1.len() as u8];
+        b.extend_from_slice(&e1);
+        b.push(0x0a);
+        b.push(e2.len() as u8);
+        b.extend_from_slice(&e2);
+        assert_eq!(super::media_entries_pb(&b), vec!["a.mp3".to_string(), "b.jpg".to_string()]);
     }
 }
 

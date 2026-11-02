@@ -58,6 +58,14 @@ pub struct AudioSyncState {
     /// engine (base, id) to delete when the episode ends, and what it found for the menu.
     pub dub_token: u64,
     pub dub_busy: bool,
+    /// Seeks (controller_audio::audio_seek_step): last position seen and when, the delays measured along the episode
+    /// (file, position, delay), the re-measure planned after a seek, and whether the sync running/answering is quiet.
+    pub last_tick: Option<(f64, Instant)>,
+    pub points: Vec<(String, f64, f64)>,
+    pub sync_at: f64,
+    pub resync_at: Option<Instant>,
+    pub quiet: bool,
+    pub quiet_reply: bool,
     pub dub_torrents: Vec<(String, u64)>,
     pub dub_note: String,
     /// Each opening of another stream gets a number; answers of an older one are dropped. The one picked by hand.
@@ -399,6 +407,9 @@ impl Core {
             self.audio_sync.pending = false;
             self.audio_sync_start(true);
         }
+        if playing {
+            self.audio_seek_step();
+        }
         if !self.audio_sync.busy {
             self.dub_step();
         }
@@ -436,12 +447,15 @@ impl Core {
         if self.audio_sync.busy {
             return;
         }
+        if !self.audio_sync.quiet {
+            self.audio_sync.quiet_reply = false;
+        }
         let (Some(m), Some(s)) = (self.mpv.clone(), self.session.as_ref()) else { return };
         let tracks = m.tracks("audio");
         let Some(own) = tracks.iter().find(|t| !t.external) else {
             self.audio_sync.note = "This video has no audio of its own to compare with.".into();
             if !auto {
-                self.toast("This video has no audio of its own to compare with.");
+                self.sync_toast("This video has no audio of its own to compare with.");
             }
             return;
         };
@@ -467,8 +481,9 @@ impl Core {
         let dub_path = rec.path.clone();
         let dub_aid = rec.file_aid.max(1).to_string();
         self.audio_sync.busy = true;
+        self.audio_sync.sync_at = vid_start + LEN / 2.0;
         self.audio_sync.note.clear();
-        self.toast("Syncing the audio with the original…");
+        self.sync_toast("Syncing the audio with the original…");
         self.events.push(Event::Session);
         crate::debug::log("player", &format!("audio: sync of {} (video {:.1}-{:.1} s, dub {:.1}-{:.1} s, own track {})", dub_path, vid_start, vid_end, dub_start, dub_end, own_id));
         self.spawn(move |tx, _| {
@@ -492,13 +507,16 @@ impl Core {
 
     pub(super) fn on_audio_sync(&mut self, token: u64, path: String, r: Result<audiosync::Match, String>) {
         self.audio_sync.busy = false;
+        let quiet = std::mem::take(&mut self.audio_sync.quiet);
+        // the toasts of a sync started after a seek stay quiet: only the delay changes
+        self.audio_sync.quiet_reply = quiet;
         self.events.push(Event::Session);
         let Some(sid) = self.session.as_ref().filter(|s| s.token == token).map(|s| s.sid.clone()) else { return };
         // a dub found in another torrent is selected only once it is in time
         let select = self.audio_sync.select_after.take().filter(|p| same_file(p, &path));
         if select.is_some() && !matches!(&r, Ok(m) if m.quality() != "unsure") {
             self.audio_sync.note = "A dub was found in another torrent but could not be synced. Pick it in this menu and adjust the delay.".into();
-            self.toast("A dub was found in another torrent but could not be synced. Pick it in this menu and adjust the delay.");
+            self.sync_toast("A dub was found in another torrent but could not be synced. Pick it in this menu and adjust the delay.");
             return;
         }
         let m = match r {
@@ -506,16 +524,22 @@ impl Core {
             Err(e) => {
                 self.audio_sync.note = "The audio could not be synced on its own. Adjust the delay by hand.".into();
                 let msg = format!("{} ({})", self.t_ui("The audio could not be synced on its own. Adjust the delay by hand."), e);
-                self.toast(&msg);
+                self.sync_toast(&msg);
                 return;
             }
         };
         if m.quality() == "unsure" {
             self.audio_sync.note = "The audio could not be synced on its own. Adjust the delay by hand.".into();
-            self.toast("The audio could not be synced on its own. Adjust the delay by hand.");
+            self.sync_toast("The audio could not be synced on its own. Adjust the delay by hand.");
             return;
         }
         let delay = (audiosync::delay_for(m.offset) * 1000.0).round() / 1000.0;
+        // the delay measured around this place of the episode: used again at once after a seek near it (two releases
+        // of one episode may be cut apart, e.g. a recap, so the delay can change along the episode)
+        let at = self.audio_sync.sync_at;
+        let pts = &mut self.audio_sync.points;
+        pts.retain(|(p, x, _)| !(same_file(p, &path) && (x - at).abs() < 30.0));
+        pts.push((path.clone(), at, delay));
         let mut active = false;
         for t in self.ext_audio.tracks.iter_mut().filter(|t| t.sid == sid && same_file(&t.path, &path)) {
             t.delay = delay;
@@ -536,7 +560,66 @@ impl Core {
         let head = if m.quality() == "good" { "Audio synced:" } else { "Audio probably synced (check it):" };
         self.audio_sync.note = head.to_string();
         let msg = format!("{} {}{:.2} s", self.t_ui(head), if delay >= 0.0 { "+" } else { "" }, delay);
-        self.toast(&msg);
+        self.sync_toast(&msg);
+    }
+
+    /// A toast of the audio sync, except for the quiet ones run after a seek.
+    fn sync_toast(&mut self, text: &str) {
+        if !self.audio_sync.quiet && !self.audio_sync.quiet_reply {
+            self.toast(text);
+        }
+    }
+
+    /// Runs on each tick: a seek (the position jumps) with a dub from a file or another stream playing puts back the
+    /// delay measured nearest that place, and measures it again there a few seconds later.
+    pub(super) fn audio_seek_step(&mut self) {
+        let Some(m) = self.mpv.clone() else { return };
+        let Some(pos) = m.get_f64("time-pos") else { return };
+        let now = Instant::now();
+        let speed = m.get_f64("speed").unwrap_or(1.0);
+        // paused, or waiting for the stream: the position stands still on purpose
+        let paused = m.get_flag("pause").unwrap_or(false) || m.get_flag("paused-for-cache").unwrap_or(false) || m.get_flag("seeking").unwrap_or(false);
+        let jumped = match self.audio_sync.last_tick {
+            Some((p, t)) => {
+                let expected = if paused { p } else { p + t.elapsed().as_secs_f64() * speed };
+                (pos - expected).abs() > 4.0
+            }
+            None => false,
+        };
+        self.audio_sync.last_tick = Some((pos, now));
+        if jumped {
+            if let Some((_, rec)) = self.selected_ext() {
+                // the nearest delay already measured, at once
+                let near = self.audio_sync.points.iter().filter(|(p, _, _)| same_file(p, &rec.path)).min_by(|a, b| (a.1 - pos).abs().total_cmp(&(b.1 - pos).abs())).cloned();
+                if let Some((_, at, d)) = near {
+                    let cur = m.get_f64("audio-delay").unwrap_or(0.0);
+                    if (cur - d).abs() > 0.02 {
+                        let _ = m.set("audio-delay", &format!("{:.3}", d));
+                        crate::debug::log("player", &format!("audio: seek to {:.0} s, delay {:.3} (measured at {:.0} s)", pos, d, at));
+                    }
+                    // measured close by: nothing more to do
+                    if (at - pos).abs() < 60.0 {
+                        self.audio_sync.resync_at = None;
+                        return;
+                    }
+                }
+                // measured again once the seeking stopped
+                self.audio_sync.resync_at = Some(now + Duration::from_secs(3));
+            }
+        }
+        if let Some(at) = self.audio_sync.resync_at {
+            if now >= at && !self.audio_sync.busy && !paused {
+                self.audio_sync.resync_at = None;
+                if let Some((_, rec)) = self.selected_ext() {
+                    crate::debug::log("player", &format!("audio: measuring the delay again at {:.0} s after a seek", pos));
+                    self.audio_sync.quiet = true;
+                    self.audio_sync_rec(rec, true);
+                    if !self.audio_sync.busy {
+                        self.audio_sync.quiet = false;
+                    }
+                }
+            }
+        }
     }
 }
 

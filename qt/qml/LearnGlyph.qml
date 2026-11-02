@@ -15,19 +15,23 @@ Item {
     property real stroke: 2
     implicitWidth: size
     implicitHeight: size
-    Shape {
-        width: 24
-        height: 24
-        scale: g.size / 24
-        transformOrigin: Item.TopLeft
-        preferredRendererType: Shape.CurveRenderer
-        ShapePath {
-            fillColor: g.filled ? g.fillColor : "transparent"
-            strokeColor: g.color
-            strokeWidth: g.stroke
-            capStyle: ShapePath.RoundCap
-            joinStyle: ShapePath.RoundJoin
-            PathSvg { path: Glyphs.paths[g.name] || "" }
+    // made once in a window: built during an asynchronous Loader it stayed blank on some machines (see Icon.qml)
+    Loader {
+        active: g.Window.window !== null
+        sourceComponent: Shape {
+            width: 24
+            height: 24
+            scale: g.size / 24
+            transformOrigin: Item.TopLeft
+            preferredRendererType: Shape.CurveRenderer
+            ShapePath {
+                fillColor: g.filled ? g.fillColor : "transparent"
+                strokeColor: g.color
+                strokeWidth: g.stroke
+                capStyle: ShapePath.RoundCap
+                joinStyle: ShapePath.RoundJoin
+                PathSvg { path: Glyphs.paths[g.name] || "" }
+            }
         }
     }
 }
