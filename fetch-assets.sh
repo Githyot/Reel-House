@@ -4,7 +4,7 @@
 #   assets/shaders/*.glsl    the Anime4K upscaling shaders (bloc97/Anime4K)
 # libmpv is not embedded here: Linux uses the system's (a package dependency), macOS ships it in the app bundle.
 # Both parts are optional: a failed download only leaves the feature out. Needs gh (GH_TOKEN) and unzip/tar.
-# Usage: bash fetch-assets.sh linux|macos
+# Usage: bash fetch-assets.sh linux|macos|shaders   (shaders: only the Anime4K shaders, for the Android build)
 set -u
 os="${1:-linux}"
 root="$(cd "$(dirname "$0")" && pwd)"
@@ -13,6 +13,9 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$assets/shaders"
 
+if [ "$os" = shaders ]; then
+  echo "rqbit: skipped (shaders only)"
+else
 echo "rqbit..."
 if [ "$os" = macos ]; then
   want='(osx|macos|darwin|apple)'
@@ -37,6 +40,7 @@ if [ -n "$pick" ] && gh release download -R ikatson/rqbit -p "$pick" -D "$tmp" -
   fi
 else
   echo "WARNING: rqbit not downloaded: the program will use Real-Debrid only"
+fi
 fi
 
 echo "Anime4K shaders..."

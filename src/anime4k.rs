@@ -1,7 +1,7 @@
 //! Anime4K (https://github.com/bloc97/Anime4K) real-time upscaling shaders for mpv.
 //! "HQ" mirrors the upstream high-end template (GTX 1080 / RTX 2070 / RX 6600 XT and up).
 //! "Fast" mirrors the low-end one (GTX 980 / GTX 1060 / RX 570).
-use crate::http::{Http, Request};
+use crate::http::Http;
 use crate::settings::Upscaling;
 use std::fs;
 use std::path::Path;
@@ -143,78 +143,188 @@ pub fn extract_embedded(files: &[(&str, &[u8])], dir: &Path) -> Result<usize, St
     Ok(n)
 }
 
-/// Fallback when the shaders were not built in: downloads the Anime4K repository and copies the shaders. The archive
-/// is unpacked here (gzip + tar read in the app), so it works on Android too, which has no `tar` to run.
+/// Fallback when the shaders were not built in (Android builds before 2026-11-02 had none). First the small zip of
+/// Anime4K's latest Release (about 100 KB, only the shaders); if that fails, the whole repository as tar.gz. Both are
+/// saved to a file first (`Http::download`, long timeout, size checked) and checked to be complete before anything is
+/// unpacked: reading the repository archive into memory in one request was cut short on Android (Waydroid), and the
+/// gzip reader then failed with "incomplete deflate stream".
 pub fn install_from_github(http: &dyn Http, dir: &Path, status: &dyn Fn(String)) -> Result<usize, String> {
-    status("Downloading Anime4K shaders from GitHub".to_string());
-    let r = http.send(&Request::get("https://codeload.github.com/bloc97/Anime4K/tar.gz/refs/heads/master").timeout(180))?;
-    if !r.ok() {
-        return Err(format!("GitHub answered {}.", r.status));
-    }
-    status("Extracting".to_string());
-    let mut tar = Vec::new();
-    {
-        use std::io::Read;
-        flate2::read::GzDecoder::new(&r.body[..]).read_to_end(&mut tar).map_err(|e| format!("Could not extract the archive: {}", e))?;
-    }
     fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let wanted = required_files();
-    let mut n = 0;
-    for (name, data) in tar_files(&tar) {
-        let base = name.rsplit('/').next().unwrap_or(&name).to_string();
-        if wanted.contains(&base) {
-            fs::write(dir.join(&base), data).map_err(|e| e.to_string())?;
-            n += 1;
+    let tmp = dir.join(".anime4k-download.tmp");
+    let mut errors = Vec::new();
+    for attempt in 0..2 {
+        status(if attempt == 0 { "Downloading the Anime4K shaders (GitHub Release)".to_string() } else { "Trying the Release again".to_string() });
+        match from_release(http, dir, &tmp, &wanted) {
+            Ok(n) if n > 0 => {
+                let _ = fs::remove_file(&tmp);
+                return finish(dir, n);
+            }
+            Ok(_) => errors.push("the Release zip has no Anime4K shaders".to_string()),
+            Err(e) => errors.push(format!("Release: {}", e)),
         }
+    }
+    status("Downloading the whole Anime4K repository (larger, may take a while)".to_string());
+    let r = from_repository(http, dir, &tmp, &wanted, status);
+    let _ = fs::remove_file(&tmp);
+    match r {
+        Ok(n) if n > 0 => finish(dir, n),
+        Ok(_) => Err(format!("No Anime4K shaders found in the download ({}).", errors.join("; "))),
+        Err(e) => {
+            errors.push(format!("repository: {}", e));
+            Err(format!("Could not download the Anime4K shaders: {}", errors.join("; ")))
+        }
+    }
+}
+
+fn finish(dir: &Path, n: usize) -> Result<usize, String> {
+    let st = status(dir);
+    if st.present < st.total {
+        return Err(format!("Only {} of {} Anime4K shaders were found ({} written).", st.present, st.total, n));
     }
     Ok(n)
 }
 
-/// The plain files of a tar archive: (path, contents). Reads ustar names (prefix + name), GNU long names (`L`) and
-/// pax `path=` records (`x`), which GitHub's archives use for long paths.
-fn tar_files(t: &[u8]) -> Vec<(String, &[u8])> {
+fn from_release(http: &dyn Http, dir: &Path, tmp: &Path, wanted: &[String]) -> Result<usize, String> {
+    let j = crate::http::get_json(http, "https://api.github.com/repos/bloc97/Anime4K/releases/latest", 30)?;
+    let url = j
+        .get("assets")
+        .items()
+        .iter()
+        .map(|a| a.get("browser_download_url").str())
+        .find(|u| u.to_lowercase().ends_with(".zip"))
+        .ok_or("no zip in the latest Release")?;
+    http.download(&url, tmp, &|_, _| {})?;
+    let zip = fs::read(tmp).map_err(|e| e.to_string())?;
+    let mut n = 0;
+    for (name, data) in zip_files(&zip, wanted)? {
+        fs::write(dir.join(&name), data).map_err(|e| e.to_string())?;
+        n += 1;
+    }
+    Ok(n)
+}
+
+fn from_repository(http: &dyn Http, dir: &Path, tmp: &Path, wanted: &[String], status: &dyn Fn(String)) -> Result<usize, String> {
+    let mb = |b: u64| b / (1024 * 1024);
+    http.download("https://codeload.github.com/bloc97/Anime4K/tar.gz/refs/heads/master", tmp, &|done, _| status(format!("Downloading the repository: {} MB", mb(done))))?;
+    status("Extracting".to_string());
+    let f = fs::File::open(tmp).map_err(|e| e.to_string())?;
+    let mut n = 0;
+    let mut write_err = None;
+    tar_each(flate2::read::GzDecoder::new(std::io::BufReader::new(f)), &mut |name, data| {
+        let base = name.rsplit('/').next().unwrap_or(name).to_string();
+        if wanted.contains(&base) {
+            match fs::write(dir.join(&base), data) {
+                Ok(()) => n += 1,
+                Err(e) => write_err = Some(e.to_string()),
+            }
+        }
+    }, &|name| wanted.iter().any(|w| name.ends_with(w.as_str())))
+    .map_err(|e| format!("the archive is damaged or incomplete ({}); try again", e))?;
+    if let Some(e) = write_err {
+        return Err(e);
+    }
+    Ok(n)
+}
+
+/// The wanted files of a zip archive (matched by file name, folders ignored): stored or deflated entries, read through
+/// the central directory.
+fn zip_files(z: &[u8], wanted: &[String]) -> Result<Vec<(String, Vec<u8>)>, String> {
+    use std::io::Read;
+    let u16_at = |i: usize| -> Option<usize> { z.get(i..i + 2).map(|b| u16::from_le_bytes([b[0], b[1]]) as usize) };
+    let u32_at = |i: usize| -> Option<usize> { z.get(i..i + 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize) };
+    let bad = || "the zip is damaged or incomplete".to_string();
+    let eocd = (0..z.len().saturating_sub(21)).rev().take(65_557).find(|&i| z[i..].starts_with(b"PK\x05\x06")).ok_or_else(bad)?;
+    let count = u16_at(eocd + 10).ok_or_else(bad)?;
+    let mut p = u32_at(eocd + 16).ok_or_else(bad)?;
+    let mut out = Vec::new();
+    for _ in 0..count {
+        if !z.get(p..).map(|r| r.starts_with(b"PK\x01\x02")).unwrap_or(false) {
+            return Err(bad());
+        }
+        let method = u16_at(p + 10).ok_or_else(bad)?;
+        let csize = u32_at(p + 20).ok_or_else(bad)?;
+        let (nlen, xlen, clen) = (u16_at(p + 28).ok_or_else(bad)?, u16_at(p + 30).ok_or_else(bad)?, u16_at(p + 32).ok_or_else(bad)?);
+        let local = u32_at(p + 42).ok_or_else(bad)?;
+        let name = String::from_utf8_lossy(z.get(p + 46..p + 46 + nlen).ok_or_else(bad)?).to_string();
+        p += 46 + nlen + xlen + clen;
+        let base = name.rsplit('/').next().unwrap_or(&name).to_string();
+        if !wanted.contains(&base) {
+            continue;
+        }
+        let start = local + 30 + u16_at(local + 26).ok_or_else(bad)? + u16_at(local + 28).ok_or_else(bad)?;
+        let raw = z.get(start..start + csize).ok_or_else(bad)?;
+        let data = match method {
+            0 => raw.to_vec(),
+            8 => {
+                let mut v = Vec::new();
+                flate2::read::DeflateDecoder::new(raw).read_to_end(&mut v).map_err(|e| format!("{} ({})", bad(), e))?;
+                v
+            }
+            m => return Err(format!("unsupported zip compression {}", m)),
+        };
+        out.push((base, data));
+    }
+    Ok(out)
+}
+
+/// Walks a tar archive as it is read: `keep(path)` says which plain files to read, `on_file(path, contents)` gets
+/// them; the rest is skipped without being kept in memory. Reads ustar names (prefix + name), GNU long names (`L`) and
+/// pax `path=` records (`x`), which GitHub's archives use for long paths. An archive that ends early is an error.
+fn tar_each(mut r: impl std::io::Read, on_file: &mut dyn FnMut(&str, &[u8]), keep: &dyn Fn(&str) -> bool) -> std::io::Result<()> {
+    use std::io::Read;
     fn field(b: &[u8]) -> String {
         let end = b.iter().position(|&c| c == 0).unwrap_or(b.len());
         String::from_utf8_lossy(&b[..end]).to_string()
     }
-    fn octal(b: &[u8]) -> usize {
-        let s = field(b);
-        usize::from_str_radix(s.trim(), 8).unwrap_or(0)
+    fn octal(b: &[u8]) -> u64 {
+        u64::from_str_radix(field(b).trim(), 8).unwrap_or(0)
     }
-    let mut out = Vec::new();
-    let mut pos = 0;
     let mut long: Option<String> = None;
-    while pos + 512 <= t.len() {
-        let h = &t[pos..pos + 512];
+    let mut h = [0u8; 512];
+    loop {
+        r.read_exact(&mut h)?;
         if h.iter().all(|&c| c == 0) {
-            break;
+            return Ok(());
         }
         let size = octal(&h[124..136]);
+        let padded = size.div_ceil(512) * 512;
         let kind = h[156];
-        let start = pos + 512;
-        let end = (start + size).min(t.len());
-        let body = &t[start..end];
-        pos = start + size.div_ceil(512) * 512;
-        match kind {
-            b'L' => long = Some(field(body)),
-            b'x' => {
-                for rec in String::from_utf8_lossy(body).lines() {
-                    if let Some(i) = rec.find(" path=") {
-                        long = Some(rec[i + 6..].to_string());
+        let name = match kind {
+            b'0' | 0 => Some(long.take().unwrap_or_else(|| {
+                let (prefix, name) = (field(&h[345..500]), field(&h[0..100]));
+                if prefix.is_empty() { name } else { format!("{}/{}", prefix, name) }
+            })),
+            _ => None,
+        };
+        let read_body = matches!(kind, b'L' | b'x') || name.as_deref().map(keep).unwrap_or(false);
+        if read_body {
+            let mut body = vec![0u8; size as usize];
+            r.read_exact(&mut body)?;
+            let skip = padded - size;
+            std::io::copy(&mut (&mut r).take(skip), &mut std::io::sink())?;
+            match (kind, name) {
+                (b'L', _) => long = Some(field(&body)),
+                (b'x', _) => {
+                    for rec in String::from_utf8_lossy(&body).lines() {
+                        if let Some(i) = rec.find(" path=") {
+                            long = Some(rec[i + 6..].to_string());
+                        }
                     }
                 }
+                (_, Some(n)) => on_file(&n, &body),
+                _ => {}
             }
-            b'0' | 0 => {
-                let name = long.take().unwrap_or_else(|| {
-                    let (prefix, name) = (field(&h[345..500]), field(&h[0..100]));
-                    if prefix.is_empty() { name } else { format!("{}/{}", prefix, name) }
-                });
-                out.push((name, body));
+        } else {
+            if kind != b'0' && kind != 0 {
+                long = None;
             }
-            _ => long = None,
+            let got = std::io::copy(&mut (&mut r).take(padded), &mut std::io::sink())?;
+            if got < padded {
+                return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "archive ends early"));
+            }
         }
     }
-    out
 }
 
 #[cfg(test)]
@@ -310,10 +420,75 @@ mod tests {
         t.extend(b);
         t.extend(header("x/plain.glsl", b'0', 0));
         t.extend(vec![0u8; 1024]);
-        let f = tar_files(&t);
+        let mut f: Vec<(String, Vec<u8>)> = Vec::new();
+        tar_each(&t[..], &mut |n, d| f.push((n.to_string(), d.to_vec())), &|_| true).unwrap();
         assert_eq!(f.len(), 2);
         assert_eq!(f[0].0, "a/glsl/Long_Name.glsl");
         assert_eq!(f[0].1, b"abc");
         assert_eq!(f[1].0, "x/plain.glsl");
+        // only what `keep` wants is read
+        let mut g = Vec::new();
+        tar_each(&t[..], &mut |n, _| g.push(n.to_string()), &|n| n.ends_with("plain.glsl")).unwrap();
+        assert_eq!(g, vec!["x/plain.glsl"]);
+        // an archive cut short is an error, not a silent partial list
+        assert!(tar_each(&t[..1100], &mut |_, _| {}, &|_| true).is_err());
+    }
+
+    fn zip_of(files: &[(&str, &[u8], bool)]) -> Vec<u8> {
+        use std::io::Write;
+        let (mut z, mut cd) = (Vec::new(), Vec::new());
+        for (name, data, deflate) in files {
+            let body = if *deflate {
+                let mut e = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+                e.write_all(data).unwrap();
+                e.finish().unwrap()
+            } else {
+                data.to_vec()
+            };
+            let method: u16 = if *deflate { 8 } else { 0 };
+            let off = z.len() as u32;
+            z.extend(b"PK\x03\x04");
+            z.extend([20, 0, 0, 0]);
+            z.extend(method.to_le_bytes());
+            z.extend([0u8; 8]);
+            z.extend((body.len() as u32).to_le_bytes());
+            z.extend((data.len() as u32).to_le_bytes());
+            z.extend((name.len() as u16).to_le_bytes());
+            z.extend([0, 0]);
+            z.extend(name.as_bytes());
+            z.extend(&body);
+            cd.extend(b"PK\x01\x02");
+            cd.extend([20, 0, 20, 0, 0, 0]);
+            cd.extend(method.to_le_bytes());
+            cd.extend([0u8; 8]);
+            cd.extend((body.len() as u32).to_le_bytes());
+            cd.extend((data.len() as u32).to_le_bytes());
+            cd.extend((name.len() as u16).to_le_bytes());
+            cd.extend([0u8; 12]);
+            cd.extend(off.to_le_bytes());
+            cd.extend(name.as_bytes());
+        }
+        let cd_off = z.len() as u32;
+        z.extend(&cd);
+        z.extend(b"PK\x05\x06");
+        z.extend([0u8; 4]);
+        z.extend((files.len() as u16).to_le_bytes());
+        z.extend((files.len() as u16).to_le_bytes());
+        z.extend((cd.len() as u32).to_le_bytes());
+        z.extend(cd_off.to_le_bytes());
+        z.extend([0, 0]);
+        z
+    }
+
+    #[test]
+    fn reads_wanted_zip_entries() {
+        let z = zip_of(&[("glsl/Anime4K_Upscale_CNN_x2_M.glsl", b"//!HOOK MAIN\nshader", true), ("readme.txt", b"x", false), ("Anime4K_Clamp_Highlights.glsl", b"clamp", false)]);
+        let want = vec!["Anime4K_Upscale_CNN_x2_M.glsl".to_string(), "Anime4K_Clamp_Highlights.glsl".to_string()];
+        let f = zip_files(&z, &want).unwrap();
+        assert_eq!(f.len(), 2);
+        assert_eq!(f[0], ("Anime4K_Upscale_CNN_x2_M.glsl".to_string(), b"//!HOOK MAIN\nshader".to_vec()));
+        assert_eq!(f[1].1, b"clamp");
+        // a zip cut short is reported, not unpacked half
+        assert!(zip_files(&z[..z.len() - 30], &want).is_err());
     }
 }
