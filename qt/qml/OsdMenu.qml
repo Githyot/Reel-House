@@ -87,7 +87,8 @@ Popup {
                         text: row.modelData.text !== undefined ? row.modelData.text : ""
                         checked: row.modelData.checked === true
                         chevron: row.modelData.chevron === true || row.modelData.key === "picker" || row.modelData.key === "upPrefs"
-                        onActivated: { pm.picked(row.modelData); pm.close() }
+                        // closed first: picking may rebuild the entries, which destroys this row (pm was then undefined)
+                        onActivated: { const m = pm, d = row.modelData; m.close(); m.picked(d) }
                     }
                     Row {
                         visible: row.isStepper
