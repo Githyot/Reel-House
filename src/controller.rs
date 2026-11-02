@@ -3078,6 +3078,13 @@ impl Core {
         let _ = mpv.set("start", &if s.start_pos > 1.0 { format!("{:.1}", s.start_pos) } else { "none".to_string() });
         let _ = mpv.set("http-header-fields", &crate::mpv::header_list(&res.headers));
         let _ = mpv.set("sub-visibility", "yes");
+        // Android: mpv's own log (why a stream fails to open, a crash inside it) beside ours, since its messages are
+        // otherwise lost there; the folder is read with `waydroid shell` / `adb`
+        if cfg!(target_os = "android") {
+            if let Some(d) = crate::debug::dir() {
+                let _ = mpv.set("log-file", &d.join("mpv-player.log").to_string_lossy());
+            }
+        }
         // what is still queued belongs to the previous video or attempt (its end-of-file error would fail this one)
         let _ = mpv.events();
         match mpv.cmd(&["loadfile", &res.url]) {
