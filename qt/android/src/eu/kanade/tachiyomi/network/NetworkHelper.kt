@@ -4,6 +4,7 @@
 package eu.kanade.tachiyomi.network
 
 import android.content.Context
+import eu.kanade.tachiyomi.network.interceptor.CloudflareInterceptor
 import eu.kanade.tachiyomi.network.interceptor.UncaughtExceptionInterceptor
 import eu.kanade.tachiyomi.network.interceptor.UserAgentInterceptor
 import okhttp3.Cache
@@ -16,8 +17,8 @@ import kotlin.time.Duration.Companion.seconds
 /**
  * The shared OkHttp client extensions build on (they reach it through `Injekt` as `network.client`).
  *
- * Unlike Mihon there are no network preferences (DNS over HTTPS, verbose logging) and no Cloudflare WebView
- * interceptor yet: a site behind a Cloudflare challenge answers 403 and the extension reports it as an error.
+ * Unlike Mihon there are no network preferences (DNS over HTTPS, verbose logging), and the Cloudflare interceptor
+ * does not solve challenges yet: a challenged site fails with a clear error.
  */
 class NetworkHelper(private val context: Context) {
 
@@ -38,6 +39,7 @@ class NetworkHelper(private val context: Context) {
         .addInterceptor(UserAgentInterceptor(::defaultUserAgentProvider))
         // Some sites only answer brotli to a browser user agent; OkHttp alone asks for gzip
         .addInterceptor(BrotliInterceptor)
+        .addInterceptor(CloudflareInterceptor())
 
     val client: OkHttpClient by lazy { clientBuilder().build() }
 

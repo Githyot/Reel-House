@@ -24,9 +24,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Hide the inputs in the log
+        env:
+          REPO: ${{ inputs.repo }}
+          PKG: ${{ inputs.pkg }}
         run: |
-          echo "::add-mask::${{ inputs.repo }}"
-          echo "::add-mask::${{ inputs.pkg }}"
+          echo "::add-mask::$REPO"
+          echo "::add-mask::$PKG"
       - uses: actions/download-artifact@v4
         with:
           name: ReelHouse-android-x86_64
@@ -38,9 +41,15 @@ jobs:
           PKG: ${{ inputs.pkg }}
         run: |
           base="${REPO%/}/"
-          apk=$(curl -fsSL "${base}index.min.json" | jq -r --arg p "$PKG" '.[] | select(.pkg == $p) | .apk')
-          test -n "$apk"
-          curl -fsSL -o ext.apk "${base}apk/${apk}"
+          # newer repositories: index.json with absolute addresses; older ones: index.min.json with apk/ next to it
+          url=$(curl -fsSL "${base}index.json" 2>/dev/null | jq -r --arg p "$PKG" '.extensionList.extensions[]? | select(.packageName == $p) | .resources.apkUrl' 2>/dev/null)
+          if [ -z "$url" ]; then
+            apk=$(curl -fsSL "${base}index.min.json" | jq -r --arg p "$PKG" '.[] | select(.pkg == $p) | .apk')
+            test -n "$apk" && url="${base}apk/${apk}"
+          fi
+          test -n "$url"
+          echo "::add-mask::$url"
+          curl -fsSL -o ext.apk "$url"
           ls -la ext.apk ReelHouse-android-x86_64.apk
       - name: Enable KVM
         run: |

@@ -96,9 +96,70 @@ pub fn repo_base(repo: &str) -> String {
     format!("{}/", r)
 }
 
+/// One extension a repository offers, read from either index format.
+#[derive(Clone, Debug, Default, PartialEq)]
 struct Offered {
-    base: String,
-    entry: Json,
+    pkg: String,
+    name: String,
+    lang: String,
+    code: i64,
+    nsfw: bool,
+    apk_url: String,
+    icon: String,
+}
+
+fn num(j: &Json) -> i64 {
+    j.as_i64().or_else(|| j.str().trim().parse().ok()).unwrap_or(0)
+}
+
+/// The language of an extension from its package (`eu.kanade.tachiyomi.extension.<lang>.<name>`).
+fn lang_of_pkg(pkg: &str) -> String {
+    let parts: Vec<&str> = pkg.split('.').collect();
+    if parts.len() >= 2 { parts[parts.len() - 2].to_string() } else { String::new() }
+}
+
+/// Reads a repository index. Newer repositories publish `index.json` as `{"extensionList": {"extensions": [...]}}`
+/// with absolute addresses (and keep a two-entry `index.min.json` that only tells old apps to update); older ones
+/// publish `index.min.json` as a plain list whose files sit under `apk/` and `icon/` next to it.
+fn parse_index(base: &str, j: &Json) -> Vec<Offered> {
+    let list = j.get("extensionList").get("extensions");
+    if !list.is_null() {
+        return list.items().iter().filter_map(|e| {
+            let pkg = e.get("packageName").str();
+            let apk_url = e.get("resources").get("apkUrl").str();
+            if pkg.is_empty() || apk_url.is_empty() {
+                return None;
+            }
+            let name = e.get("name").str();
+            let warning = e.get("contentWarning").str();
+            Some(Offered {
+                lang: lang_of_pkg(&pkg),
+                code: num(e.get("versionCode")),
+                nsfw: warning.ends_with("NSFW") || suwayomi::looks_adult(&name),
+                icon: e.get("resources").get("iconUrl").str(),
+                apk_url,
+                pkg,
+                name,
+            })
+        }).collect();
+    }
+    j.items().iter().filter_map(|e| {
+        let pkg = e.get("pkg").str();
+        let apk = e.get("apk").str();
+        if pkg.is_empty() || apk.is_empty() || apk.contains('/') || apk.contains("..") {
+            return None;
+        }
+        let name = e.get("name").str().trim_start_matches("Tachiyomi: ").to_string();
+        Some(Offered {
+            lang: e.get("lang").str(),
+            code: num(e.get("code")),
+            nsfw: e.get("nsfw").as_i64().unwrap_or(0) == 1 || e.get("nsfw").as_bool().unwrap_or(false) || suwayomi::looks_adult(&name),
+            icon: format!("{}icon/{}.png", base, pkg),
+            apk_url: format!("{}apk/{}", base, apk),
+            pkg,
+            name,
+        })
+    }).collect()
 }
 
 fn offered(http: &dyn Http, repos: &[String]) -> (Vec<Offered>, Vec<String>) {
@@ -106,10 +167,14 @@ fn offered(http: &dyn Http, repos: &[String]) -> (Vec<Offered>, Vec<String>) {
     let mut errors = Vec::new();
     for repo in repos {
         let base = repo_base(repo);
-        match crate::http::get_json(http, &format!("{}index.min.json", base), 30) {
-            Ok(j) => out.extend(j.items().iter().map(|e| Offered { base: base.clone(), entry: e.clone() })),
-            Err(e) => errors.push(format!("{}: {}", suwayomi::repo_label(repo), e)),
+        let mut got = crate::http::get_json(http, &format!("{}index.json", base), 60).map(|j| parse_index(&base, &j)).unwrap_or_default();
+        if got.is_empty() {
+            match crate::http::get_json(http, &format!("{}index.min.json", base), 30) {
+                Ok(j) => got = parse_index(&base, &j),
+                Err(e) => errors.push(format!("{}: {}", suwayomi::repo_label(repo), e)),
+            }
         }
+        out.extend(got);
     }
     (out, errors)
 }
@@ -136,21 +201,18 @@ pub fn extensions(http: &dyn Http, srv: &Server, host: &Host) -> Result<Vec<Exte
     }
     let mut out: Vec<Extension> = Vec::new();
     for o in list {
-        let e = &o.entry;
-        let pkg = e.get("pkg").str();
-        if pkg.is_empty() || out.iter().any(|x| x.pkg == pkg) {
+        if out.iter().any(|x| x.pkg == o.pkg) {
             continue;
         }
-        let name = e.get("name").str().trim_start_matches("Tachiyomi: ").to_string();
-        let mine = have.iter().find(|(p, _)| *p == pkg);
+        let mine = have.iter().find(|(p, _)| *p == o.pkg);
         out.push(Extension {
-            lang: e.get("lang").str(),
+            lang: o.lang,
             installed: mine.is_some(),
-            update: mine.map(|(_, c)| e.get("code").as_i64().unwrap_or(0) > *c).unwrap_or(false),
-            nsfw: e.get("nsfw").as_i64().unwrap_or(0) == 1 || e.get("nsfw").as_bool().unwrap_or(false) || suwayomi::looks_adult(&name),
-            icon: format!("{}icon/{}.png", o.base, pkg),
-            pkg,
-            name,
+            update: mine.map(|(_, c)| o.code > *c).unwrap_or(false),
+            nsfw: o.nsfw,
+            icon: o.icon,
+            pkg: o.pkg,
+            name: o.name,
         });
     }
     // installed ones whose repository is gone still show, so they can be removed
@@ -165,12 +227,12 @@ pub fn extensions(http: &dyn Http, srv: &Server, host: &Host) -> Result<Vec<Exte
 
 pub fn install(http: &dyn Http, srv: &Server, host: &Host, pkg: &str) -> Result<(), String> {
     let (list, errors) = offered(http, &host.repos);
-    let o = list.iter().find(|o| o.entry.get("pkg").str() == pkg).ok_or_else(|| if errors.is_empty() { format!("No repository offers {}.", pkg) } else { errors.join(" · ") })?;
-    let apk = o.entry.get("apk").str();
-    if apk.is_empty() || apk.contains('/') || apk.contains("..") {
+    let o = list.iter().find(|o| o.pkg == pkg).ok_or_else(|| if errors.is_empty() { format!("No repository offers {}.", pkg) } else { errors.join(" · ") })?;
+    let apk = o.apk_url.rsplit('/').next().unwrap_or("").split('?').next().unwrap_or("").to_string();
+    if !apk.ends_with(".apk") || apk.contains("..") {
         return Err("The repository gave no valid file for this extension.".to_string());
     }
-    let r = http.send(&Request::get(&format!("{}apk/{}", o.base, apk)).timeout(180))?;
+    let r = http.send(&Request::get(&o.apk_url).timeout(180))?;
     if !r.ok() || r.body.is_empty() {
         return Err(format!("Could not download {} ({}).", apk, r.status));
     }
@@ -309,6 +371,18 @@ mod tests {
         assert!(!suwayomi::raw(&id).contains(':'));
         assert_eq!(split_id(&id), Some(("2499283573021220255".to_string(), "/manga/one-piece?x=1&y=ç".to_string())));
         assert_eq!(split_id("suwayomi:12"), None);
+    }
+
+    #[test]
+    fn both_index_formats() {
+        let new = Json::parse(r#"{"extensionList":{"extensions":[{"name":"A","packageName":"eu.kanade.tachiyomi.extension.en.a","resources":{"apkUrl":"https://example.org/d/a-v1.6.1.apk","iconUrl":"https://example.org/a.png"},"versionCode":"106001","contentWarning":"CONTENT_WARNING_NSFW"}]}}"#).unwrap();
+        let o = &parse_index("https://example.org/r/", &new)[0];
+        assert_eq!((o.pkg.as_str(), o.lang.as_str(), o.code, o.nsfw), ("eu.kanade.tachiyomi.extension.en.a", "en", 106001, true));
+        assert_eq!(o.apk_url, "https://example.org/d/a-v1.6.1.apk");
+        let old = Json::parse(r#"[{"name":"Tachiyomi: B","pkg":"x.all.b","apk":"b.apk","lang":"all","code":3,"nsfw":0}]"#).unwrap();
+        let o = &parse_index("https://example.org/r/", &old)[0];
+        assert_eq!((o.name.as_str(), o.code, o.nsfw), ("B", 3, false));
+        assert_eq!((o.apk_url.as_str(), o.icon.as_str()), ("https://example.org/r/apk/b.apk", "https://example.org/r/icon/x.all.b.png"));
     }
 
     #[test]
