@@ -58,10 +58,17 @@ pub struct AudioSyncState {
     /// engine (base, id) to delete when the episode ends, and what it found for the menu.
     pub dub_token: u64,
     pub dub_busy: bool,
-    pub dub_torrent: Option<(String, u64)>,
+    pub dub_torrents: Vec<(String, u64)>,
     pub dub_note: String,
-    /// The dub being opened was picked by hand in the Audio menu (selected at once, not after the sync).
-    pub dub_manual: bool,
+    /// Each opening of another stream gets a number; answers of an older one are dropped. The one picked by hand.
+    pub dub_gen: u64,
+    pub dub_manual_gen: u64,
+    /// What is being opened (for the menu), and the tracks being added that mpv has not shown yet.
+    pub dub_opening: String,
+    pub dub_pending: Option<super::controller_dub::DubPending>,
+    /// Links and stream indexes already added to this video (not offered again).
+    pub extra_urls: Vec<String>,
+    pub extra_opened: Vec<usize>,
     /// Syncing the subtitle with the speech (crate::subsync): running now, and what the last one found.
     pub sub_busy: bool,
     pub sub_note: String,

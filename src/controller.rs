@@ -82,6 +82,8 @@ mod controller_kaiwa;
 mod controller_voice;
 #[path = "controller_marks.rs"]
 mod controller_marks;
+#[path = "controller_resume.rs"]
+mod controller_resume;
 #[path = "controller_modes.rs"]
 mod controller_modes;
 #[path = "controller_notify.rs"]
@@ -342,7 +344,7 @@ pub enum Msg {
     /// The sync of the subtitle with the speech (crate::subsync): session token, asked by itself, result.
     SubSync(u64, bool, Result<crate::subsync::Match, String>),
     /// A dub found in another torrent of the episode (controller_dub): session token, its name, the stream opened.
-    DubFound(u64, String, Result<Resolved, String>),
+    DubFound(u64, u64, String, String, Result<Resolved, String>),
     ForcedProgress(u8),
     BackupDone(Result<(String, usize, u64), String>, bool, u64),
     Restored(Result<usize, String>),
@@ -506,6 +508,9 @@ pub struct Core {
     pub progress: Vec<Progress>,
     last_progress_save: Instant,
     resume_pos: Option<f64>,
+    /// Where each episode stopped and its tracks (resume.json, controller_resume).
+    ep_resume: Vec<controller_resume::EpResume>,
+    track_restore: Option<controller_resume::TrackRestore>,
     pub calendar: Vec<CalEntry>,
     pub calendar_loading: bool,
     pub calendar_info: String,
@@ -1066,6 +1071,7 @@ impl Core {
         let dur = mpv.get_f64("duration").unwrap_or(0.0);
         let eof = mpv.get_flag("eof-reached").unwrap_or(false);
         self.sub_hint(&mpv);
+        self.restore_tracks_step(&mpv);
         self.track_progress(pos, dur, eof);
         if dur > 1.0 && !self.session.as_ref().map(|s| s.segments_fetched).unwrap_or(true) {
             self.probe_segments(dur);
@@ -1200,6 +1206,9 @@ impl Core {
         let (video_id, label) = (s.sid.clone(), self.detail.as_ref().and_then(|d| d.streams.as_ref().map(|x| x.label.clone())).unwrap_or_default());
         let finished = eof || pos / dur >= 0.92;
         if finished {
+            if self.resume_point(&video_id).is_some() {
+                self.remember_episode(&meta.id, &video_id, pos, dur, true);
+            }
             if let Some(i) = self.progress.iter().position(|p| p.meta.id == meta.id && p.video_id == video_id) {
                 self.progress.remove(i);
                 self.save_progress_file();
@@ -1213,6 +1222,7 @@ impl Core {
             return;
         }
         self.last_progress_save = Instant::now();
+        self.remember_episode(&meta.id, &video_id, pos, dur, false);
         self.progress.retain(|p| p.meta.id != meta.id);
         self.progress.insert(0, Progress { meta, video_id, label, position: pos, duration: dur, updated: now_secs() });
         self.progress.truncate(30);
@@ -1232,6 +1242,7 @@ impl Core {
 
     pub fn remove_progress(&mut self, meta_id: &str) {
         self.progress.retain(|p| p.meta.id != meta_id);
+        self.forget_position(|p| p.meta_id == meta_id);
         self.save_progress_file();
         self.events.push(Event::Progress);
     }
@@ -1267,6 +1278,7 @@ impl Core {
         }
         if !self.watched.remove(id) {
             self.watched.insert(id.to_string());
+            self.forget_position(|p| p.video_id == id);
             if let Some(i) = self.progress.iter().position(|p| p.video_id == id) {
                 self.progress.remove(i);
                 self.save_progress_file();
@@ -1581,6 +1593,8 @@ impl Core {
             progress: load_progress(&pdir),
             last_progress_save: Instant::now(),
             resume_pos: None,
+            ep_resume: controller_resume::load_resume(&pdir),
+            track_restore: None,
             calendar: vec![],
             calendar_loading: false,
             calendar_info: String::new(),
@@ -2538,7 +2552,7 @@ impl Core {
             Msg::Forced(t, r) => self.on_forced(t, r),
             Msg::AudioSync(t, p, r) => self.on_audio_sync(t, p, r),
             Msg::SubSync(t, a, r) => self.on_sub_sync(t, a, r),
-            Msg::DubFound(t, l, r) => self.on_dub_found(t, l, r),
+            Msg::DubFound(t, g, l, lang, r) => self.on_dub_found(t, g, l, lang, r),
             Msg::ForcedProgress(p) => {
                 if let Some(t) = self.translating.as_mut() {
                     t.pct = t.pct.max(p);
@@ -2787,7 +2801,12 @@ impl Core {
                 m
             });
         }
-        let start = self.resume_pos.take().unwrap_or(0.0);
+        // from "Continue watching", otherwise where this episode stopped (whichever torrent it is opened from)
+        let here = self.session.as_ref().map(|s| s.sid.clone()).unwrap_or_default();
+        let start = self.resume_pos.take().or_else(|| self.resume_point(&here)).unwrap_or(0.0);
+        if start > 0.0 {
+            crate::debug::log("player", &format!("resume: {} starts at {:.0} s", here, start));
+        }
         self.prefetch = None;
         self.begin_stream(start, None);
         self.events.push(Event::Session);

@@ -45,6 +45,7 @@ Popup {
 
     readonly property var tracks: arr(p.subs)
     readonly property var cands: arr(p.subCands)
+    readonly property var srcs: arr(p.subSources)
     readonly property string activeLang: { var t = tracks.filter(function(x) { return x.selected }); return t.length > 0 ? t[0].langKey : "" }
     // Languages: what is already loaded, then what the addons offer.
     readonly property var langs: {
@@ -395,6 +396,21 @@ Popup {
                 }
             }
             Note { visible: sm.langs.length === 0; topPadding: 6; text: Core.tr(Core.uiLang, "None found yet") }
+            // other streams of the episode that may carry subtitles in more languages: one click adds their tracks
+            Caption { visible: sm.srcs.length > 0; text: Core.tr(Core.uiLang, "From other streams") }
+            Group {
+                visible: sm.srcs.length > 0
+                Repeater {
+                    model: sm.srcs.length
+                    delegate: OsdRow {
+                        required property int index
+                        readonly property var modelData: sm.srcs[index] || ({})
+                        text: modelData.label || ""
+                        onActivated: Core.cmd({cmd: "dub_try", index: modelData.index, lang: ""})
+                    }
+                }
+            }
+            Note { visible: sm.p.dubBusy === true || sm.p.dubAdding === true; topPadding: 6; text: Core.tr(Core.uiLang, "Adding the tracks of another stream…") }
         }
 
         // ================= Forced translation =================

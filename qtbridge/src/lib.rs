@@ -1443,7 +1443,10 @@ fn state_player(b: &Bridge, c: &Core) -> Json {
     o.push(("dubBusy", Json::Bool(c.audio_sync.dub_busy)));
     o.push(("dubNote", s(&c.audio_sync.dub_note)));
     // dubs listed by the other streams of the episode, to pick by hand in the Audio menu
-    o.push(("dubCands", Json::Arr(c.dub_choices().into_iter().map(|(i, l)| Json::obj(vec![("index", n(i as f64)), ("label", s(&l))])).collect())));
+    o.push(("dubOpening", s(&c.audio_sync.dub_opening)));
+    o.push(("dubAdding", Json::Bool(c.audio_sync.dub_pending.is_some())));
+    o.push(("audioSources", Json::Arr(c.audio_sources().into_iter().map(|(i, l, t)| Json::obj(vec![("index", n(i as f64)), ("lang", s(&l)), ("label", s(&t))])).collect())));
+    o.push(("subSources", Json::Arr(c.sub_sources().into_iter().map(|(i, t)| Json::obj(vec![("index", n(i as f64)), ("label", s(&t))])).collect())));
     o.push((
         "skip",
         match c.current_skip() {
@@ -1612,6 +1615,8 @@ fn run_cmd(b: &Bridge, j: &Json) -> Json {
         if (cmd.starts_with("study_") || cmd.starts_with("learn_")) && !cmd.contains("sounds") && cmd != "learn_play" {
             c.time_input();
         }
+        // a track picked in the player's menus: the one saved for this episode is no longer put back over it
+        c.tracks_by_hand(&cmd);
         match cmd.as_str() {
             "load_home" => c.load_home(),
             // the "Offline mode" switch: the app uses only what is on disk, even with a connection
@@ -1767,7 +1772,7 @@ fn run_cmd(b: &Bridge, j: &Json) -> Json {
             "sub_sync" => c.sub_sync_start(false),
             "audio_remove" => c.audio_remove(),
             "auto_dub" => c.set_auto_dub(j.get("on").as_bool().unwrap_or(true)),
-            "dub_try" => c.dub_try(j.get("index").as_u64().unwrap_or(0) as usize),
+            "dub_try" => c.dub_try(j.get("index").as_u64().unwrap_or(0) as usize, &j.get("lang").str()),
             "set_sub" => {
                 // id 0 turns subtitles off.
                 if let Some(m) = &mpv {
