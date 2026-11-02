@@ -5,7 +5,7 @@ import "Osd.js" as Osd
 
 // A menu of the player (quality, audio, Anime4K, video scale), opened above its button, in the look of the theme
 // (Osd.js): an Adwaita popover, a Fluent flyout, an M3 menu or an Apple glass panel.
-// entries: [{text, checked, key}] plus {header: "Title"}, {sep: true} and {stepper: true, value, key} (− value +).
+// entries: [{text, checked, key, chevron}] plus {header: "Title"}, {sep: true} and {stepper: true, value, key, coarse} (− value +).
 // The first header is the title of the menu.
 Popup {
     id: pm
@@ -86,16 +86,18 @@ Popup {
                         width: parent.width
                         text: row.modelData.text !== undefined ? row.modelData.text : ""
                         checked: row.modelData.checked === true
-                        chevron: row.modelData.key === "picker" || row.modelData.key === "upPrefs"
+                        chevron: row.modelData.chevron === true || row.modelData.key === "picker" || row.modelData.key === "upPrefs"
                         onActivated: { pm.picked(row.modelData); pm.close() }
                     }
                     Row {
                         visible: row.isStepper
                         anchors { left: parent.left; leftMargin: pm.o.rowPad - 4; verticalCenter: parent.verticalCenter }
                         spacing: 8
+                        // {coarse: true}: also ± 1 s (dir ±10), for a dub seconds away
+                        OsdButton { visible: row.modelData.coarse === true; kind: "tonal"; text: "−1 s"; implicitHeight: 32; anchors.verticalCenter: parent.verticalCenter; onClicked: pm.stepped(row.modelData, -10) }
                         OsdButton { kind: "round"; glyph: "minus"; anchors.verticalCenter: parent.verticalCenter; onClicked: pm.stepped(row.modelData, -1) }
                         Text {
-                            width: 80
+                            width: row.modelData.coarse === true ? 64 : 80
                             horizontalAlignment: Text.AlignHCenter
                             anchors.verticalCenter: parent.verticalCenter
                             text: row.modelData.value !== undefined ? row.modelData.value : ""
@@ -105,6 +107,7 @@ Popup {
                             font.family: Theme.type.family
                         }
                         OsdButton { kind: "round"; glyph: "plus"; anchors.verticalCenter: parent.verticalCenter; onClicked: pm.stepped(row.modelData, 1) }
+                        OsdButton { visible: row.modelData.coarse === true; kind: "tonal"; text: "+1 s"; implicitHeight: 32; anchors.verticalCenter: parent.verticalCenter; onClicked: pm.stepped(row.modelData, 10) }
                         OsdButton { kind: "tonal"; text: Core.tr(Core.uiLang, "Reset"); implicitHeight: 32; anchors.verticalCenter: parent.verticalCenter; onClicked: pm.stepped(row.modelData, 0) }
                     }
                 }

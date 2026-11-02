@@ -191,7 +191,11 @@ fn state_library(c: &Core) -> Json {
 }
 
 fn stream_json(x: &reelhouse::streams::Stream) -> Json {
+    let audio = x.audio_langs();
     Json::obj(vec![
+        // the audio languages its name says it carries: [{lang: "pt-BR", flag: "br"}…], and whether it says "dual/multi"
+        ("audio", Json::Arr(audio.langs.iter().map(|l| Json::obj(vec![("lang", s(&l.lang)), ("flag", s(&l.flag))])).collect())),
+        ("multiAudio", Json::Bool(audio.multi)),
         ("headline", s(&x.headline())),
         ("lines", Json::Arr(x.detail_lines().iter().map(|l| s(l)).collect())),
         ("quality", s(&if x.res != 0 { reelhouse::streams::res_label(x.res) } else { String::new() })),
@@ -1252,6 +1256,7 @@ fn state_player(b: &Bridge, c: &Core) -> Json {
         Stage::Loading => ("loading", String::new()),
         Stage::Buffering => ("buffering", String::new()),
         Stage::Playing => ("playing", String::new()),
+        Stage::Consent => ("consent", String::new()),
         Stage::Failed(e) => ("failed", e.clone()),
     };
     let mut o = vec![
@@ -1429,6 +1434,16 @@ fn state_player(b: &Bridge, c: &Core) -> Json {
     o.push(("videoScale", s(&c.settings.general.video_scale)));
     o.push(("speed", n(c.speed())));
     o.push(("subDelay", n(c.sub_delay())));
+    o.push(("audioDelay", n(c.audio_delay())));
+    o.push(("audioSyncBusy", Json::Bool(c.audio_sync.busy)));
+    o.push(("audioSyncNote", s(&c.audio_sync.note)));
+    o.push(("subSyncBusy", Json::Bool(c.audio_sync.sub_busy)));
+    o.push(("subSyncNote", s(&c.audio_sync.sub_note)));
+    o.push(("autoDub", Json::Bool(c.auto_dub())));
+    o.push(("dubBusy", Json::Bool(c.audio_sync.dub_busy)));
+    o.push(("dubNote", s(&c.audio_sync.dub_note)));
+    // dubs listed by the other streams of the episode, to pick by hand in the Audio menu
+    o.push(("dubCands", Json::Arr(c.dub_choices().into_iter().map(|(i, l)| Json::obj(vec![("index", n(i as f64)), ("label", s(&l))])).collect())));
     o.push((
         "skip",
         match c.current_skip() {
@@ -1688,6 +1703,7 @@ fn run_cmd(b: &Bridge, j: &Json) -> Json {
                 c.toggle_library(&m);
             }
             "close_player" => c.close_player(),
+            "p2p_accept" => c.p2p_accept(),
             // Plays an address or a file directly (also used to test the player without an addon).
             "play_url" => {
                 let st = reelhouse::streams::Stream { name: j.get("title").str(), url: Some(j.get("url").str()), ..Default::default() };
@@ -1743,11 +1759,15 @@ fn run_cmd(b: &Bridge, j: &Json) -> Json {
                     let _ = m.cmd(&["seek", &format!("{}", j.get("secs").as_f64().unwrap_or(0.0)), "relative"]);
                 }
             }
-            "set_audio" => {
-                if let Some(m) = &mpv {
-                    let _ = m.set("aid", &format!("{}", j.get("id").as_i64().unwrap_or(1)));
-                }
-            }
+            // an audio track: the video's own get no delay, a loaded file (dub) its saved one (controller_audio)
+            "set_audio" => c.audio_select(j.get("id").as_i64().unwrap_or(1)),
+            "audio_add" => c.audio_add(&j.get("path").str()),
+            "audio_delay" => c.set_audio_delay(j.get("value").as_f64().unwrap_or(0.0)),
+            "audio_sync" => c.audio_sync_start(false),
+            "sub_sync" => c.sub_sync_start(false),
+            "audio_remove" => c.audio_remove(),
+            "auto_dub" => c.set_auto_dub(j.get("on").as_bool().unwrap_or(true)),
+            "dub_try" => c.dub_try(j.get("index").as_u64().unwrap_or(0) as usize),
             "set_sub" => {
                 // id 0 turns subtitles off.
                 if let Some(m) = &mpv {

@@ -508,22 +508,117 @@ Item {
                 font.family: Theme.type.family
             }
         }
+        // The streams in sections by quality (4K, 1080p, 720p, lower), each showing only its 2 best until it is opened
+        // (HP, 2026-11-02: "condensar os streams em qualidades ... somente deixe os 2 melhores aparentes"). Inside a
+        // section the core's order (best first) is kept; a copy saved on disk is always shown.
         ListView {
             id: sList
             anchors { left: parent.left; right: parent.right; top: sHead.bottom; bottom: parent.bottom; margins: 14 }
             clip: true
             spacing: 8
             readonly property var rows: page.streams && page.streams.list ? page.streams.list : []
-            model: rows.length
+            readonly property int shownPerGroup: 2
+            // the sections opened by the user; closed again when another episode's streams come in
+            property var open: ({})
+            property string openFor: ""
+            readonly property string listKey: page.streams && page.streams.label !== undefined ? String(page.streams.label) : ""
+            onListKeyChanged: if (listKey !== openFor) { openFor = listKey; open = ({}) }
+            function groupOf(r) {
+                var res = r.res || 0
+                return res >= 2160 ? "4k" : (res >= 1080 ? "1080" : (res >= 720 ? "720" : "low"))
+            }
+            readonly property var groups: [
+                { key: "4k", label: "4K" }, { key: "1080", label: "1080p" }, { key: "720", label: "720p" },
+                { key: "low", label: Core.tr(Core.uiLang, "Below 720p") }]
+            readonly property var entries: {
+                var by = {}, out = [], g, i
+                for (i = 0; i < rows.length; i++) {
+                    g = groupOf(rows[i] || {})
+                    if (!by[g]) by[g] = []
+                    by[g].push(i)
+                }
+                for (var k = 0; k < groups.length; k++) {
+                    var key = groups[k].key, idx = by[key] || []
+                    if (idx.length === 0)
+                        continue
+                    var opened = !!open[key], extra = 0
+                    for (i = shownPerGroup; i < idx.length; i++)
+                        if (rows[idx[i]].local !== true)
+                            extra++
+                    out.push({ kind: "head", key: key, label: groups[k].label, count: idx.length, opened: opened, extra: extra })
+                    for (i = 0; i < idx.length; i++)
+                        if (opened || i < shownPerGroup || rows[idx[i]].local === true)
+                            out.push({ kind: "row", index: idx[i] })
+                    if (extra > 0)
+                        out.push({ kind: "more", key: key, opened: opened, hidden: extra })
+                }
+                return out
+            }
+            function toggle(key) {
+                var o = Object.assign({}, open)
+                o[key] = !o[key]
+                open = o
+            }
+            model: entries.length
             boundsBehavior: Flickable.StopAtBounds
             ScrollBar.vertical: ScrollBar { }
-            delegate: StreamRow {
+            delegate: Loader {
+                id: ent
                 required property int index
-                readonly property var modelData: sList.rows[index] || ({})
+                readonly property var e: sList.entries[index] || ({})
                 width: sList.width
-                stream: modelData
-                episode: page.isSeries
-                onClicked: Core.cmd({cmd: "play", index: index})
+                sourceComponent: e.kind === "head" ? headComp : (e.kind === "more" ? moreComp : rowComp)
+                Component {
+                    id: rowComp
+                    StreamRow {
+                        width: sList.width
+                        stream: sList.rows[ent.e.index] || ({})
+                        episode: page.isSeries
+                        onClicked: Core.cmd({cmd: "play", index: ent.e.index})
+                    }
+                }
+                // the section's title: the quality and how many streams it holds; a click opens or closes it
+                Component {
+                    id: headComp
+                    Item {
+                        width: sList.width
+                        height: 34
+                        Row {
+                            anchors { left: parent.left; leftMargin: 4; verticalCenter: parent.verticalCenter }
+                            spacing: 8
+                            Icon { name: ent.e.extra > 0 ? (ent.e.opened ? "down" : "right") : "down"; size: 18; color: Theme.c.textDim; anchors.verticalCenter: parent.verticalCenter; opacity: ent.e.extra > 0 ? 1 : 0.4 }
+                            Text { text: ent.e.label || ""; color: Theme.c.text; font.pixelSize: 18; font.weight: Font.ExtraBold; font.family: Theme.type.family; anchors.verticalCenter: parent.verticalCenter }
+                            Text {
+                                text: ent.e.count + " " + (ent.e.count === 1 ? Core.tr(Core.uiLang, "stream") : Core.tr(Core.uiLang, "streams"))
+                                color: Theme.c.textDim; font.pixelSize: 14; font.family: Theme.type.family; anchors.verticalCenter: parent.verticalCenter
+                            }
+                        }
+                        Rectangle { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; height: 1; color: Theme.c.border }
+                        MouseArea { anchors.fill: parent; enabled: ent.e.extra > 0; cursorShape: Qt.PointingHandCursor; onClicked: sList.toggle(ent.e.key) }
+                    }
+                }
+                // "Show 7 more" under the 2 best, or "Show less" when the section is open
+                Component {
+                    id: moreComp
+                    Rectangle {
+                        width: sList.width
+                        height: 36
+                        radius: Theme.shape.card
+                        color: ma.containsMouse ? Theme.c.cardHover : "transparent"
+                        border.width: 1
+                        border.color: Theme.c.border
+                        Row {
+                            anchors.centerIn: parent
+                            spacing: 6
+                            Icon { name: ent.e.opened ? "up" : "down"; size: 16; color: Theme.c.accent; anchors.verticalCenter: parent.verticalCenter }
+                            Text {
+                                text: ent.e.opened ? Core.tr(Core.uiLang, "Show less") : Core.tr(Core.uiLang, "Show %1 more").arg(ent.e.hidden)
+                                color: Theme.c.accent; font.pixelSize: 14; font.weight: Font.Bold; font.family: Theme.type.family; anchors.verticalCenter: parent.verticalCenter
+                            }
+                        }
+                        MouseArea { id: ma; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: sList.toggle(ent.e.key) }
+                    }
+                }
             }
         }
         // Addons that failed (GTK streams_errors: red captions).

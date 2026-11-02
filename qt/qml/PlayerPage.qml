@@ -7,6 +7,7 @@ import Reelhouse 1.0
 import "Accel.js" as Accel
 import "Osd.js" as Osd
 import QtQuick.Shapes
+import QtQuick.Dialogs
 
 // Over the video (VideoItem in Main.qml), like the GTK player: the preparing / error panel, the top bar, the control bar
 // with its menus (quality, audio, subtitles, speed, Anime4K, video scale), the skip-opening button and the next-episode card.
@@ -89,12 +90,40 @@ Item {
         }
     }
     MouseArea {
+        id: surface
         anchors.fill: parent
         hoverEnabled: true
-        onPositionChanged: function(m) { page.pointerAt(parent, m.x, m.y) }
+        // a phone: sliding a finger up / down on the left half dims the picture, on the right half changes the
+        // volume (idea from NuvioMobile's PlayerGestureOverlay, written anew). Not from the very top or bottom, where
+        // Android's own gestures live.
+        property string gesture: ""
+        property bool slid: false
+        property real startX: 0
+        property real startY: 0
+        property real startValue: 0
+        preventStealing: gesture !== ""
+        onPressed: function(m) { gesture = ""; slid = false; startX = m.x; startY = m.y }
+        onReleased: gesture = ""
+        onPositionChanged: function(m) {
+            page.pointerAt(parent, m.x, m.y)
+            if (!Theme.mobile || !pressed) return
+            const dy = startY - m.y
+            if (gesture === "") {
+                if (Math.abs(dy) < 24 || Math.abs(dy) < Math.abs(m.x - startX)) return
+                if (startY < 48 || startY > height - 72) return
+                gesture = startX < width / 2 ? "light" : "volume"
+                slid = true
+                startValue = gesture === "light" ? page.light : Math.min(100, page.p.volume !== undefined ? page.p.volume : 100)
+            }
+            const v = Math.round(Math.max(gesture === "light" ? 20 : 0, Math.min(100, startValue + dy / (height * 0.7) * 100)))
+            if (gesture === "light") page.light = v
+            else Core.cmd({cmd: "volume", value: v})
+            gestureFlash.show(gesture, v)
+        }
         // a phone: a tap shows or hides the controls (play / pause is the big button in the middle); a double tap on
         // a side seeks that way (Theme.mob.seekStep seconds), in the middle it plays / pauses
         onClicked: function(m) {
+            if (slid) { slid = false; return }
             if (!Theme.mobile) { page.togglePlay(); return }
             if (page.shown && page.playing && !page.p.paused) page.shown = false; else page.poke()
         }
@@ -109,6 +138,31 @@ Item {
         }
         cursorShape: page.shown || !page.playing ? Qt.ArrowCursor : Qt.BlankCursor
         onWheel: function(w) { Core.cmd({cmd: "volume", value: Math.max(0, Math.min(150, (page.p.volume || 0) + (w.angleDelta.y > 0 ? 5 : -5)))}); page.poke() }
+    }
+
+    // a phone: how bright the picture is (20 to 100 %), set by sliding on the left half; a dark veil over the video
+    property int light: 100
+    Rectangle { anchors.fill: parent; z: -1; color: "#000000"; opacity: (100 - page.light) / 100; visible: page.light < 100 }
+    // the "☀ 70 %" / "🔊 45 %" pill while sliding
+    Rectangle {
+        id: gestureFlash
+        property string kind: "volume"
+        property int value: 0
+        function show(k, v) { kind = k; value = v; opacity = 1; gestureFlashTimer.restart() }
+        visible: opacity > 0
+        opacity: 0
+        z: 4
+        anchors.horizontalCenter: parent.horizontalCenter
+        y: parent.height * 0.18
+        width: 132; height: 44; radius: 22
+        color: "#80000000"
+        Text {
+            anchors.centerIn: parent
+            text: (gestureFlash.kind === "light" ? "☀ " + Core.tr(Core.uiLang, "Brightness") : "🔊 " + Core.tr(Core.uiLang, "Volume")) + " " + gestureFlash.value + "%"
+            color: "#ffffff"; font.pixelSize: 15; font.weight: Font.Bold; font.family: Theme.type.family
+        }
+        Behavior on opacity { NumberAnimation { duration: 160 } }
+        Timer { id: gestureFlashTimer; interval: 700; onTriggered: gestureFlash.opacity = 0 }
     }
 
     // the "« 10 s" / "10 s »" flash of a double tap on a phone
@@ -150,6 +204,8 @@ Item {
         clip: true
         visible: !page.playing
         readonly property bool failed: page.stage === "failed"
+        // the first torrent: the P2P notice waits for an answer
+        readonly property bool consent: page.stage === "consent"
         Image {
             id: loadBg
             // a little bigger than the page: the blur fades the borders, and they fall outside
@@ -204,7 +260,7 @@ Item {
                     NumberAnimation { from: 1; to: 0.45; duration: 900; easing.type: Easing.InOutQuad }
                 }
             }
-            Spinner { Layout.alignment: Qt.AlignHCenter; Layout.topMargin: 4; running: !loading.failed; visible: running }
+            Spinner { Layout.alignment: Qt.AlignHCenter; Layout.topMargin: 4; running: !loading.failed && !loading.consent; visible: running }
             Text {
                 Layout.fillWidth: true
                 horizontalAlignment: Text.AlignHCenter
@@ -237,6 +293,19 @@ Item {
                 font.pixelSize: 14
                 font.family: Theme.type.family
             }
+            // the P2P notice, shown once before the first torrent plays
+            Text {
+                visible: loading.consent
+                Layout.fillWidth: true
+                Layout.maximumWidth: 640
+                Layout.alignment: Qt.AlignHCenter
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.Wrap
+                text: Core.tr(Core.uiLang, "This video comes from a torrent (P2P). While it plays, the app downloads pieces from other people and also sends pieces to them, and your IP address is visible to them. Only play what you have the right to watch. With a debrid account in Preferences nothing is shared.")
+                color: "#ffffff"
+                font.pixelSize: 16
+                font.family: Theme.type.family
+            }
             // the error, on a panel of the theme so a bright wallpaper never washes it out
             Rectangle {
                 visible: loading.failed
@@ -265,6 +334,7 @@ Item {
                 Layout.alignment: Qt.AlignHCenter
                 Layout.topMargin: 8
                 spacing: 10
+                OsdButton { visible: loading.consent; kind: "accent"; pill: page.ps !== "fluent"; glyph: "play"; text: Core.tr(Core.uiLang, "I understand, play"); onClicked: Core.cmd({cmd: "p2p_accept"}) }
                 OsdButton { visible: loading.failed; kind: "accent"; pill: page.ps !== "fluent"; glyph: "refresh"; text: Core.tr(Core.uiLang, "Try again"); onClicked: Core.cmd({cmd: "retry_stream"}) }
                 OsdButton { visible: loading.failed && page.arr(page.p.streams).length > 1; kind: "tonal"; pill: page.ps !== "fluent"; text: Core.tr(Core.uiLang, "Choose another torrent"); onClicked: picker.open() }
                 OsdButton { kind: "tonal"; pill: page.ps !== "fluent"; text: loading.failed ? Core.tr(Core.uiLang, "Back") : Core.tr(Core.uiLang, "Cancel"); onClicked: Core.cmd({cmd: "close_player"}) }
@@ -882,11 +952,38 @@ Item {
         if (page.arr(page.p.streams).length > 1) { e.push({sep: true}); e.push({text: Core.tr(Core.uiLang, "Choose another torrent…"), key: "picker"}) }
         return e
     }
-    function audioEntries() {
-        var e = [{header: Core.tr(Core.uiLang, "Audio")}]
+    // `delay` = the audio delay just stepped to (the player's state comes a moment later)
+    function audioEntries(delay) {
+        const T = function(x) { return Core.tr(Core.uiLang, x) }
+        var e = [{header: T("Audio")}]
         var t = page.arr(page.p.audio)
-        if (t.length === 0) e.push({text: Core.tr(Core.uiLang, "No audio tracks"), key: ""})
-        t.forEach(function(a) { e.push({text: a.label, checked: a.selected, key: "aid", id: a.id}) })
+        if (t.length === 0) e.push({text: T("No audio tracks"), key: ""})
+        t.forEach(function(a) { e.push({text: (a.external ? "⤓ " : "") + a.label, checked: a.selected, key: "aid", id: a.id}) })
+        e.push({sep: true})
+        e.push({text: T("Load an audio track…"), key: "aload", chevron: true})
+        // a dub from the episode's other torrents (only the addons the user added are read)
+        e.push({text: T("Look for a dub in other torrents"), key: "autodub", checked: page.p.autoDub === true})
+        if (page.p.dubBusy) e.push({text: T("Opening a torrent with a dub…"), key: ""})
+        else if (page.p.dubNote) e.push({text: T(page.p.dubNote), key: "", note: true})
+        // the other streams of the episode that say they carry a dub: one click adds its sound
+        const dc = page.arr(page.p.dubCands)
+        if (dc.length > 0 && !page.p.dubBusy) {
+            e.push({header: T("Dubs in other torrents")})
+            dc.forEach(function(x) { e.push({text: x.label, key: "dubtry", index: x.index}) })
+        }
+        // a dub loaded from a file: its delay (+ = the sound comes later), the automatic sync, taking it out
+        const ext = t.some(function(a) { return a.selected && a.external })
+        const d = delay !== undefined ? delay : (page.p.audioDelay || 0)
+        if (ext || Math.abs(d) > 0.0005) {
+            e.push({header: T("Audio delay")})
+            e.push({stepper: true, coarse: true, key: "adelay", num: d, value: (d >= 0 ? "+" : "") + d.toFixed(2) + " s"})
+        }
+        if (ext) {
+            if (page.p.audioSyncBusy) e.push({text: T("Syncing the audio with the original…"), key: ""})
+            else e.push({text: T("Sync with the original audio"), key: "async"})
+            if (page.p.audioSyncNote) e.push({text: T(page.p.audioSyncNote), key: "", note: true})
+            e.push({text: T("Remove this audio track"), key: "aremove"})
+        }
         return e
     }
     function subEntries() {
@@ -926,6 +1023,11 @@ Item {
         case "q": Core.cmd({cmd: "switch_stream", index: en.index}); break
         case "picker": picker.open(); break
         case "aid": Core.cmd({cmd: "set_audio", id: en.id}); break
+        case "aload": audioDlg.open(); break
+        case "async": Core.cmd({cmd: "audio_sync"}); break
+        case "aremove": Core.cmd({cmd: "audio_remove"}); break
+        case "autodub": Core.cmd({cmd: "auto_dub", on: page.p.autoDub !== true}); break
+        case "dubtry": Core.cmd({cmd: "dub_try", index: en.index}); break
         case "sid": Core.cmd({cmd: "set_sub", id: en.id}); break
         case "cand": Core.cmd({cmd: "load_sub_cand", index: en.index}); break
         case "speed": Core.cmd({cmd: "speed", value: en.value}); break
@@ -952,7 +1054,39 @@ Item {
             }
         }
     }
-    OsdMenu { id: aMenu; onPicked: function(en) { page.pick(en) } }
+    OsdMenu {
+        id: aMenu
+        menuWidth: 370
+        onPicked: function(en) { page.pick(en) }
+        // ± 0.1 s (dir ±1) or ± 1 s (dir ±10); 0 = back to none
+        onStepped: function(en, dir) {
+            const v = dir === 0 ? 0 : Math.round(((en.num || 0) + dir * 0.1) * 1000) / 1000
+            Core.cmd({cmd: "audio_delay", value: v})
+            aMenu.entries = page.audioEntries(v)
+        }
+    }
+    // the menu follows the sync while it is open (busy -> the result)
+    property string audioSyncWas: ""
+    Connections {
+        target: Core
+        function onPlayerChanged() {
+            const b = (page.p.audioSyncBusy === true) + "/" + (page.p.dubBusy === true) + "/" + (page.p.dubNote || "")
+            if (b === page.audioSyncWas) return
+            page.audioSyncWas = b
+            if (aMenu.visible) aMenu.entries = page.audioEntries()
+        }
+    }
+    // an audio file (a dub) for this video; on Android the picked document is copied into the app first
+    FileDialog {
+        id: audioDlg
+        title: Core.tr(Core.uiLang, "Choose an audio track")
+        nameFilters: Qt.platform.os === "android" ? [] : [Core.tr(Core.uiLang, "Audio") + " (*.mka *.mp3 *.aac *.m4a *.ac3 *.eac3 *.dts *.flac *.ogg *.oga *.opus *.wav *.wma *.mp2 *.mkv *.mp4 *.avi *.webm)", Core.tr(Core.uiLang, "All files") + " (*)"]
+        onAccepted: {
+            const path = Core.importFile(selectedFile.toString(), "external-audio")
+            if (path === "") Core.toast(Core.tr(Core.uiLang, "The audio file was not found."))
+            else Core.cmd({cmd: "audio_add", path: path})
+        }
+    }
     OsdMenu { id: uMenu; onPicked: function(en) { page.pick(en) } }
     OsdMenu { id: vsMenu; menuWidth: 200; onPicked: function(en) { page.pick(en) } }
 

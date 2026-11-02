@@ -157,6 +157,7 @@ qt_add_resources(reelhouse-qt "app" PREFIX "/" FILES
     qml/FlatButton.qml
     qml/Fab.qml
     qml/FeedbackBox.qml
+    qml/Flag.qml
     qml/LoadingScreen.qml
     qml/OfflinePill.qml
     qml/GenreChip.qml

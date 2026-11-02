@@ -108,11 +108,12 @@ pub fn prepare_known(
     source_langs: &[String],
     translator: Option<&dyn translate::Translator>,
     cache: &Path,
+    strip_sdh: bool,
     status: &(dyn Fn(String) + Sync),
 ) -> Result<Option<subtitles::SubFile>, String> {
     let mut last: Result<Option<subtitles::SubFile>, String> = Ok(None);
     for step in sub_plan(known, cands, fallback_target, source_langs) {
-        let wanted = Wanted { candidates: &step.cands, target: &step.target, preferred: &step.preferred };
+        let wanted = Wanted { candidates: &step.cands, target: &step.target, preferred: &step.preferred, strip_sdh };
         match subtitles::prepare(http, &wanted, translator, cache, status) {
             Ok(Some(f)) => return Ok(Some(f)),
             // a known language whose files are all broken: the next language (or the translation) is tried

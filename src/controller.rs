@@ -90,6 +90,10 @@ mod controller_notify;
 pub mod notify_study;
 #[path = "controller_sub.rs"]
 mod controller_sub;
+#[path = "controller_audio.rs"]
+pub mod controller_audio;
+#[path = "controller_dub.rs"]
+pub mod controller_dub;
 #[path = "controller_translators.rs"]
 mod controller_translators;
 // local profiles: each person's library, favourites, history and study (src/profiles.rs)
@@ -333,6 +337,12 @@ pub enum Msg {
     DlSibling(Box<MetaItem>, i64, i64, Option<Box<Stream>>),
     DlSiblingsDone(usize, usize),
     Forced(u64, Result<Forced, String>),
+    /// The automatic sync of an external audio track: session token, file, result.
+    AudioSync(u64, String, Result<crate::audiosync::Match, String>),
+    /// The sync of the subtitle with the speech (crate::subsync): session token, asked by itself, result.
+    SubSync(u64, bool, Result<crate::subsync::Match, String>),
+    /// A dub found in another torrent of the episode (controller_dub): session token, its name, the stream opened.
+    DubFound(u64, String, Result<Resolved, String>),
     ForcedProgress(u8),
     BackupDone(Result<(String, usize, u64), String>, bool, u64),
     Restored(Result<usize, String>),
@@ -381,6 +391,8 @@ pub enum Stage {
     Loading,
     Buffering,
     Playing,
+    /// Waiting for the user to accept, once, that a torrent shares pieces with other people (P2P).
+    Consent,
     Failed(String),
 }
 
@@ -627,6 +639,9 @@ pub struct Core {
     taste_gen: u64,
     covers: HashMap<String, (String, String)>,
     forced: Vec<Forced>,
+    /// Audio files loaded for episodes (dubs) and their delays (see controller_audio).
+    pub ext_audio: controller_audio::ExtAudioStore,
+    pub audio_sync: controller_audio::AudioSyncState,
     cover_asked: HashSet<String>,
     pub downloads: Vec<Download>,
     dl_running: HashSet<String>,
@@ -1342,7 +1357,9 @@ impl Core {
         }
         let Some(d) = self.detail.as_ref() else { return };
         let kind = d.meta.kind.clone();
-        let cur_res = self.session.as_ref().and_then(|s| s.streams.get(s.cur)).map(|x| x.res).unwrap_or(0);
+        let cur_stream = self.session.as_ref().and_then(|s| s.streams.get(s.cur)).cloned();
+        let rule_text = self.settings.general.autoplay_rule.clone();
+        let p2p_ok = self.settings.general.p2p_ok || (self.settings.debrid.enabled && !self.settings.debrid.api_key.trim().is_empty());
         self.prefetch = Some(Prefetch { video_id: video_id.to_string(), ready: None });
         let (entries, preferred, st) = (self.settings.addons.clone(), self.settings.general.preferred_height, self.settings.clone());
         let (engine, exe, rt_dir, dl) = (self.engine.clone(), self.rt.rqbit.clone(), self.rt.dir.clone(), self.data_dir.join("torrents"));
@@ -1376,8 +1393,25 @@ impl Core {
                 send(tx, Msg::Prefetched(vid, list, 0, Err("No streams for the next episode.".to_string())));
                 return;
             }
-            // The copy on disk first; otherwise the same quality as now, when the next episode has it.
-            let idx = if has_local { 0 } else { list.iter().position(|s| s.res == cur_res && cur_res != 0).unwrap_or(0) };
+            // The copy on disk first; otherwise the user's rule and the same release as now (the addon's binge group,
+            // else the closest release family), else the same quality as now, when the next episode has it.
+            let idx = if has_local {
+                0
+            } else {
+                let rule = streams::autoplay_rule(&rule_text);
+                let picked = streams::autoplay_pick(&list, cur_stream.as_ref(), None, rule.as_ref());
+                let cur_res = cur_stream.as_ref().map(|x| x.res).unwrap_or(0);
+                if rule.is_none() && cur_res != 0 && list[picked].res != cur_res {
+                    list.iter().position(|s| s.res == cur_res).unwrap_or(picked)
+                } else {
+                    picked
+                }
+            };
+            // no torrent starts in the background before the user accepted P2P
+            if !p2p_ok && list[idx].is_torrent() {
+                send(tx, Msg::Prefetched(vid, list, idx, Err("P2P not accepted yet.".to_string())));
+                return;
+            }
             let res = resolve_stream(&*http, &st, &list[idx], &engine, exe.as_deref(), &rt_dir, &dl, &vid, &|_| {}, &|| false);
             if let Ok(r) = &res {
                 if r.torrent.is_some() {
@@ -1650,6 +1684,8 @@ impl Core {
             taste_gen: 0,
             covers: controller_dl::load_covers(&data_dir2),
             forced: controller_sub::load_forced(&data_dir2),
+            ext_audio: controller_audio::load_ext_audio(&data_dir2),
+            audio_sync: Default::default(),
             cover_asked: HashSet::new(),
             downloads: downloads::load(&data_dir2),
             dl_running: HashSet::new(),
@@ -2500,6 +2536,9 @@ impl Core {
             Msg::DlSibling(m, s, e, st) => self.on_dl_sibling(*m, s, e, st.map(|b| *b)),
             Msg::DlSiblingsDone(f, t) => self.on_dl_siblings_done(f, t),
             Msg::Forced(t, r) => self.on_forced(t, r),
+            Msg::AudioSync(t, p, r) => self.on_audio_sync(t, p, r),
+            Msg::SubSync(t, a, r) => self.on_sub_sync(t, a, r),
+            Msg::DubFound(t, l, r) => self.on_dub_found(t, l, r),
             Msg::ForcedProgress(p) => {
                 if let Some(t) = self.translating.as_mut() {
                     t.pct = t.pct.max(p);
@@ -2554,6 +2593,19 @@ impl Core {
         }
     }
 
+    /// The stream of the list on screen that plays by itself: the one that played this video before, else the
+    /// user's rule and the release of the last episode (see `streams::autoplay_pick`). A copy on disk stays first.
+    fn autoplay_index(&self) -> usize {
+        let Some(d) = self.detail.as_ref() else { return 0 };
+        let Some(ss) = d.streams.as_ref() else { return 0 };
+        if ss.list.first().map(|s| s.local.is_some()).unwrap_or(false) {
+            return 0;
+        }
+        let (same, prev) = crate::streammemory::hints(&self.data_dir, &d.meta.id, &ss.key);
+        let rule = streams::autoplay_rule(&self.settings.general.autoplay_rule);
+        streams::autoplay_pick(&ss.list, prev.as_ref(), same.as_deref(), rule.as_ref())
+    }
+
     fn on_streams(&mut self, gen: u64, list: Vec<Stream>, errors: Vec<String>) {
         if gen != self.stream_gen {
             return;
@@ -2571,7 +2623,8 @@ impl Core {
         }
         self.events.push(Event::Streams);
         if auto_play {
-            self.play_from_detail(0);
+            let idx = self.autoplay_index();
+            self.play_from_detail(idx);
         } else {
             self.look_up_file_sizes(gen);
         }
@@ -2682,6 +2735,8 @@ impl Core {
         self.stop_thumbs();
         // a video starts: Conversation's local AI and Whisper let go of the memory the player needs
         self.kaiwa_release();
+        // a dub streamed for the last episode stops downloading
+        self.dub_drop();
         self.token_counter += 1;
         self.session = Some(Session {
             id: self.token_counter,
@@ -2736,6 +2791,23 @@ impl Core {
         self.prefetch = None;
         self.begin_stream(start, None);
         self.events.push(Event::Session);
+    }
+
+    /// True while the user has not accepted P2P and this stream would be played as a torrent (not through debrid).
+    pub fn needs_p2p_consent(&self, s: &Stream) -> bool {
+        let debrid = self.settings.debrid.enabled && !self.settings.debrid.api_key.trim().is_empty();
+        !self.settings.general.p2p_ok && s.is_torrent() && !debrid
+    }
+
+    /// The user accepted P2P on the player's notice: remember it and start the waiting stream.
+    pub fn p2p_accept(&mut self) {
+        self.settings.general.p2p_ok = true;
+        self.save_settings();
+        let start = match self.session.as_ref() {
+            Some(s) if s.stage == Stage::Consent => s.start_pos,
+            _ => return,
+        };
+        self.begin_stream(start, None);
     }
 
     /// Looks for opening / ending times once the video is playing and its length is known:
@@ -2836,6 +2908,16 @@ impl Core {
     /// Starts (or restarts) the pipeline for the current stream. `reuse` keeps an already-prepared
     /// subtitle when only the quality changes.
     pub fn begin_stream(&mut self, start_pos: f64, reuse: Option<Option<SubFile>>) {
+        // the first torrent: say what P2P means before anything is downloaded or shared (idea from NuvioMobile)
+        let ask = self.session.as_ref().and_then(|s| s.streams.get(s.cur)).map(|x| self.needs_p2p_consent(x)).unwrap_or(false);
+        if ask {
+            if let Some(s) = self.session.as_mut() {
+                s.stage = Stage::Consent;
+                s.start_pos = start_pos;
+            }
+            self.events.push(Event::Session);
+            return;
+        }
         let subs_on = self.settings.subtitles.enabled;
         let (token, cancel, stream, kind, sid) = {
             let Some(s) = self.session.as_mut() else { return };
@@ -2920,7 +3002,7 @@ impl Core {
                     let note: Box<dyn Fn(&str) + Send + Sync> = Box::new(move |m: &str| send(tx, Msg::SubStatus(token, m.to_string())));
                     let translator = translate::for_use("subtitles", &st, &*http).ok().map(|t| controller_translators::gated(t, &gate, Some(note)));
                     // A subtitle in a language the user knows first; else the best one translated (controller_sub.rs).
-                    controller_sub::prepare_known(&*http, &st.general.known_langs, &found.items, &target, &st.subtitles.source_langs, translator.as_deref(), &cache, &status)
+                    controller_sub::prepare_known(&*http, &st.general.known_langs, &found.items, &target, &st.subtitles.source_langs, translator.as_deref(), &cache, st.subtitles.strip_sdh, &status)
                 })();
                 send(tx, Msg::SubDone(token, result));
             });
@@ -2995,6 +3077,7 @@ impl Core {
         self.theme_step();
         self.xray_step();
         self.studyplay_step();
+        self.audio_step();
         let Some(mpv) = self.mpv.clone() else {
             // No player (it failed to start): say so instead of "Finding the video source" for ever.
             if let (Some(e), Some(s)) = (self.mpv_error.clone(), self.session.as_mut()) {
@@ -3018,6 +3101,13 @@ impl Core {
                 Evt::FileLoaded => {
                     s.file_loaded = true;
                     s.loaded_at = Some(Instant::now());
+                    // this stream works: the next episode keeps its release, resuming this video plays it again
+                    if let (Some(d), Some(cur)) = (self.detail.as_ref(), s.streams.get(s.cur)) {
+                        let mid = &d.meta.id;
+                        if s.sid == *mid || s.sid.starts_with(&format!("{}:", mid)) {
+                            crate::streammemory::remember(&self.data_dir, mid, &s.sid, cur);
+                        }
+                    }
                     if s.stage == Stage::Loading {
                         s.stage = Stage::Buffering;
                     }
@@ -3128,6 +3218,10 @@ impl Core {
                     for f in self.forced.iter().filter(|f| f.sid == s.sid) {
                         let _ = mpv.cmd(&["sub-add", &f.path, "auto", &f.title, &f.lang]);
                     }
+                    // Audio files loaded for this episode (a dub) come back with their delay.
+                    if controller_audio::restore_ext_audio(&mpv, &mut self.ext_audio, &self.data_dir, &s.sid, &s.ep) {
+                        self.audio_sync.pending = true;
+                    }
                     let _ = mpv.set("pause", "no");
                     s.stage = Stage::Playing;
                     if let Some(first) = s.notes.first().cloned() {
@@ -3231,6 +3325,7 @@ impl Core {
         if let Some(s) = self.session.take() {
             s.cancel.store(true, Ordering::SeqCst);
         }
+        self.dub_drop();
         self.stop_thumbs();
         if let Some(m) = &self.mpv {
             let _ = m.cmd(&["stop"]);

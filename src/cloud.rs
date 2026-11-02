@@ -355,7 +355,79 @@ pub fn detect_sync_folders(p: Provider, env: &dyn Fn(&str) -> Option<String>, os
 
 /// The same on this computer.
 pub fn detect(p: Provider) -> Vec<PathBuf> {
-    detect_sync_folders(p, &|k| std::env::var(k).ok(), std::env::consts::OS)
+    let mut v = detect_sync_folders(p, &|k| std::env::var(k).ok(), std::env::consts::OS);
+    if std::env::consts::OS == "linux" {
+        // Linux has no Google Drive or OneDrive app: rclone mounts are how people reach them
+        for m in rclone_mounts_here(p) {
+            if !v.contains(&m) {
+                v.push(m);
+            }
+        }
+    }
+    v
+}
+
+/// The rclone remote type that is `p` ("drive" for Google Drive), or None.
+fn rclone_type(p: Provider) -> Option<&'static str> {
+    match p {
+        Provider::Google => Some("drive"),
+        Provider::OneDrive => Some("onedrive"),
+        _ => None,
+    }
+}
+
+/// The remotes of an rclone.conf with their type: [("gdrive", "drive"), ...].
+pub fn rclone_remotes(conf: &str) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    let mut cur: Option<String> = None;
+    for line in conf.lines() {
+        let l = line.trim();
+        if l.starts_with('[') && l.ends_with(']') {
+            cur = Some(l[1..l.len() - 1].trim().to_string());
+        } else if let (Some(name), Some((k, val))) = (&cur, l.split_once('=')) {
+            if k.trim() == "type" {
+                out.push((name.clone(), val.trim().to_string()));
+            }
+        }
+    }
+    out
+}
+
+/// Mount points of /proc/mounts (`mounts`) that rclone made for a remote of `p` (types read from `conf`). A mount of a
+/// crypt/alias/union remote is not counted: its type is not the cloud's.
+pub fn rclone_mounts(p: Provider, mounts: &str, conf: &str) -> Vec<PathBuf> {
+    let Some(want) = rclone_type(p) else { return vec![] };
+    let remotes = rclone_remotes(conf);
+    let mut out = Vec::new();
+    for line in mounts.lines() {
+        let f: Vec<&str> = line.split_whitespace().collect();
+        if f.len() < 3 || f[2] != "fuse.rclone" {
+            continue;
+        }
+        let remote = f[0].split(':').next().unwrap_or("");
+        if remotes.iter().any(|(n, t)| n == remote && t == want) {
+            // /proc/mounts writes a space as \040 (and tab, newline, backslash the same way)
+            let dir = f[1].replace("\\040", " ").replace("\\011", "\t").replace("\\012", "\n").replace("\\134", "\\");
+            out.push(PathBuf::from(dir));
+        }
+    }
+    out
+}
+
+/// rclone mounts of `p` on this computer (Linux).
+fn rclone_mounts_here(p: Provider) -> Vec<PathBuf> {
+    let Ok(mounts) = std::fs::read_to_string("/proc/mounts") else { return vec![] };
+    if !mounts.contains("fuse.rclone") {
+        return vec![];
+    }
+    let conf = std::env::var("RCLONE_CONFIG")
+        .ok()
+        .filter(|c| !c.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| std::env::var("XDG_CONFIG_HOME").ok().filter(|c| !c.is_empty()).map(|c| PathBuf::from(c).join("rclone").join("rclone.conf")))
+        .or_else(|| std::env::var("HOME").ok().map(|h| PathBuf::from(h).join(".config").join("rclone").join("rclone.conf")));
+    let conf = conf.and_then(|c| std::fs::read_to_string(c).ok()).unwrap_or_default();
+    rclone_mounts(p, &mounts, &conf)
 }
 
 /// A backup kept online (a file in the sync folder, or on the cloud).
@@ -895,6 +967,9 @@ pub struct Live {
     pub listed: bool,
     /// The provider and method `remote` was read for ("gdrive/account"): another choice hides the old list.
     pub listed_for: String,
+    /// The provider and method `status` was written for: another choice hides it (an old GitHub message must not
+    /// show under Google Drive).
+    pub status_for: String,
     /// Access token in memory: (provider id, token, valid until).
     pub access: Option<(String, String, u64)>,
     /// "Upload now": the backup being made is uploaded even with the online copy off.
@@ -948,6 +1023,19 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    #[test]
+    fn rclone_mounts_of_the_cloud() {
+        let conf = "[gdrive]\ntype = drive\nscope = drive\n\n[od]\ntype = onedrive\n\n[secret]\ntype = crypt\nremote = gdrive:x\n";
+        let mounts = "proc /proc proc rw 0 0\n\
+gdrive: /home/hp/Google\\040Drive fuse.rclone rw,nosuid 0 0\n\
+od:Backups /home/hp/OneDrive fuse.rclone rw 0 0\n\
+secret: /home/hp/Secret fuse.rclone rw 0 0\n";
+        assert_eq!(rclone_remotes(conf).len(), 3);
+        assert_eq!(rclone_mounts(Provider::Google, mounts, conf), vec![PathBuf::from("/home/hp/Google Drive")]);
+        assert_eq!(rclone_mounts(Provider::OneDrive, mounts, conf), vec![PathBuf::from("/home/hp/OneDrive")]);
+        assert!(rclone_mounts(Provider::ICloud, mounts, conf).is_empty());
     }
 
     #[test]

@@ -183,6 +183,7 @@ impl Core {
     /// A status line for the window (and the debug report).
     fn cloud_status(&mut self, text: &str) {
         self.cloud.status = text.to_string();
+        self.cloud.status_for = self.cloud_list_key();
         crate::debug::log("cloud", text);
         self.events.push(Event::Info(MsgKind::Backup, text.to_string()));
     }
@@ -568,6 +569,27 @@ impl Core {
         format!("{}/{}/{}/{}", c.provider().id(), c.by_account(), c.folder, c.github_repo)
     }
 
+    /// False only where the sync folder is surely a plain local folder: on Linux (no Google Drive or OneDrive app),
+    /// a folder chosen by hand that is neither inside a folder found for the cloud (an rclone mount, ~/GoogleDrive…)
+    /// nor on a FUSE mount. The window then says the backups stay on this computer.
+    fn cloud_folder_synced(&self) -> bool {
+        let c = &self.settings.backup.cloud;
+        let p = c.provider();
+        if std::env::consts::OS != "linux" || c.by_account() || !matches!(p, Provider::Google | Provider::OneDrive) {
+            return true;
+        }
+        let Some(folder) = self.cloud_folder() else { return true };
+        if self.cloud.detected(p).iter().any(|d| folder.starts_with(d)) {
+            return true;
+        }
+        // any FUSE mount holding the folder (rclone with another remote name, GNOME's gvfs, google-drive-ocamlfuse…)
+        let mounts = std::fs::read_to_string("/proc/mounts").unwrap_or_default();
+        mounts.lines().any(|l| {
+            let f: Vec<&str> = l.split_whitespace().collect();
+            f.len() >= 3 && (f[2] == "fuse" || f[2].starts_with("fuse.")) && f[1] != "/" && folder.starts_with(f[1].replace("\\040", " "))
+        })
+    }
+
     /// The online copy for the Preferences window (`extra.cloud` of the "prefs" state).
     pub fn cloud_state(&self) -> Json {
         let c = &self.settings.backup.cloud;
@@ -593,7 +615,8 @@ impl Core {
             ("registerUrl", cloud::register_url(p).into()),
             ("github", Json::obj(vec![("repo", c.github_repo.clone().into()), ("account", c.github_account.clone().into()), ("connected", (!c.github_token.is_empty()).into()), ("defaultRepo", cloud::github::DEFAULT_REPO.into())])),
             ("busy", self.cloud.busy.clone().into()),
-            ("status", self.cloud.status.clone().into()),
+            ("status", if self.cloud.status_for == self.cloud_list_key() { self.cloud.status.clone() } else { String::new() }.into()),
+            ("folderSynced", self.cloud_folder_synced().into()),
             ("pending", pending),
             ("listed", (self.cloud.listed && current).into()),
             ("remote", Json::Arr(if current { self.cloud.remote.iter().map(|r| r.to_json()).collect() } else { vec![] })),

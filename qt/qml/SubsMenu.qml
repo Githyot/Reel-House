@@ -267,6 +267,26 @@ Popup {
                     value: ((sm.p.subDelay || 0) >= 0 ? "+" : "") + (sm.p.subDelay || 0).toFixed(1) + " s"
                     onStep: function(dir) { Core.cmd({cmd: "sub_delay", value: dir === 0 ? 0 : (sm.p.subDelay || 0) + dir * 0.1}) }
                 }
+                // finds the delay by itself from the speech of the video (crate::subsync)
+                OsdButton {
+                    kind: "tonal"
+                    glyph: "refresh"
+                    enabled: sm.p.subSyncBusy !== true
+                    text: sm.p.subSyncBusy === true ? Core.tr(Core.uiLang, "Syncing…") : Core.tr(Core.uiLang, "Sync with the speech")
+                    implicitHeight: 32
+                    ToolTip.visible: hovered
+                    ToolTip.text: Core.tr(Core.uiLang, "Listens to the next two minutes of the video and moves the subtitle to match the voices")
+                    onClicked: Core.cmd({cmd: "sub_sync"})
+                }
+                Text {
+                    visible: text !== ""
+                    width: parent.width
+                    wrapMode: Text.Wrap
+                    text: sm.p.subSyncNote ? Core.tr(Core.uiLang, sm.p.subSyncNote) : ""
+                    color: "#b3ffffff"
+                    font.pixelSize: 12
+                    font.family: Theme.type.family
+                }
             }
             Column {
                 width: parent.width

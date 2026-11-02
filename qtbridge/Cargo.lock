@@ -2636,6 +2636,7 @@ dependencies = [
  "librqbit",
  "librqbit-dualstack-sockets",
  "png",
+ "regex",
  "rquickjs",
  "ruzstd",
  "tokio",

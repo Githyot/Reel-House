@@ -41,6 +41,8 @@ pub struct Stream {
     pub score: u32,
     /// Path of a copy on this computer (a torrent kept with "Keep downloaded").
     pub local: Option<String>,
+    /// The addon's `behaviorHints.bingeGroup`: streams of the same release share it from one episode to the next.
+    pub binge_group: Option<String>,
 }
 
 impl Stream {
@@ -102,6 +104,7 @@ impl Stream {
             size_lookup: 0,
             score: parse_score(&text),
             local: None,
+            binge_group: nz(hints.get("bingeGroup").str()),
             name,
             desc,
         }
@@ -113,6 +116,11 @@ impl Stream {
 
     pub fn is_playable(&self) -> bool {
         self.local.is_some() || self.url.is_some() || self.info_hash.is_some() || self.yt_id.is_some()
+    }
+
+    /// The audio languages the stream's name and file name say it carries (for the flags in the list).
+    pub fn audio_langs(&self) -> crate::streamlang::AudioLangs {
+        crate::streamlang::audio_langs(&format!("{}\n{}\n{}", self.name, self.desc, self.filename.as_deref().unwrap_or("")))
     }
 
     /// First line of the addon's name, e.g. "4K · Bluray".
@@ -339,6 +347,66 @@ pub fn rank(streams: &mut [Stream], preferred: u32) {
     });
 }
 
+/// The key that names one stream: its info hash, else its link.
+pub fn key_of(s: &Stream) -> String {
+    s.info_hash.clone().or_else(|| s.url.clone()).or_else(|| s.local.clone()).unwrap_or_default()
+}
+
+/// A user rule for choosing a stream by itself, e.g. `1080p.*(web|bluray)` (case does not matter). None when empty
+/// or not a valid pattern, so a typo never stops playback.
+pub fn autoplay_rule(pattern: &str) -> Option<regex::Regex> {
+    let p = pattern.trim();
+    if p.is_empty() {
+        return None;
+    }
+    regex::RegexBuilder::new(p).case_insensitive(true).size_limit(1 << 20).build().ok()
+}
+
+fn rule_text(s: &Stream) -> String {
+    format!("{}\n{}\n{}", s.name, s.desc, s.filename.clone().unwrap_or_default())
+}
+
+/// Which stream of a ranked list plays by itself (idea from NuvioMobile, GPL-3.0, StreamAutoPlaySelector.kt; written
+/// anew here). In order:
+/// 1. `same` (the stream that last played this very video, e.g. when resuming) when it is still listed;
+/// 2. only streams that match the user's rule, when there is a rule and something matches it;
+/// 3. among those, the release of `reference` (the stream of the previous episode): the same addon `bingeGroup`,
+///    else the closest release family (group, quality, source, codec, language);
+/// 4. else the best ranked one.
+pub fn autoplay_pick(list: &[Stream], reference: Option<&Stream>, same: Option<&str>, rule: Option<&regex::Regex>) -> usize {
+    if list.is_empty() {
+        return 0;
+    }
+    if let Some(key) = same.filter(|k| !k.is_empty()) {
+        if let Some(i) = list.iter().position(|s| s.is_playable() && key_of(s) == key) {
+            return i;
+        }
+    }
+    let mut cands: Vec<usize> = (0..list.len()).filter(|&i| list[i].is_playable()).collect();
+    if let Some(re) = rule {
+        let matching: Vec<usize> = cands.iter().copied().filter(|&i| re.is_match(&rule_text(&list[i]))).collect();
+        if !matching.is_empty() {
+            cands = matching;
+        }
+    }
+    if let Some(r) = reference {
+        if let Some(g) = r.binge_group.as_deref().filter(|g| !g.is_empty()) {
+            if let Some(&i) = cands.iter().find(|&&i| list[i].binge_group.as_deref() == Some(g)) {
+                return i;
+            }
+        }
+        let best = cands
+            .iter()
+            .map(|&i| (i, crate::downloads::family_score(r, &list[i])))
+            .filter(|(_, sc)| *sc >= 40)
+            .max_by_key(|&(i, sc)| (sc, std::cmp::Reverse(i)));
+        if let Some((i, _)) = best {
+            return i;
+        }
+    }
+    cands.first().copied().unwrap_or(0)
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct QualityOption {
     pub res: u32,
@@ -412,6 +480,46 @@ mod tests {
         assert_eq!(parse_size_mb("size 700 MB"), 700);
         assert_eq!(parse_size_mb("\u{1F4BE} 1.5GB"), 1536);
         assert_eq!(parse_size_mb("nothing"), 0);
+    }
+
+    #[test]
+    fn autoplay_keeps_the_binge_group_then_the_rule() {
+        let mut a = s("1080p", "[SubsPlease] Show - 05 (1080p)", Some("a"));
+        let mut b = s("720p", "[Erai] Show - 05 (720p) WEB", Some("b"));
+        let mut c = s("1080p", "[Erai] Show - 05 (1080p) WEB", Some("c"));
+        a.binge_group = Some("subsplease-1080".into());
+        b.binge_group = Some("erai-720".into());
+        c.binge_group = Some("erai-1080".into());
+        let list = vec![a.clone(), b.clone(), c.clone()];
+        // no reference, no rule: the best ranked
+        assert_eq!(autoplay_pick(&list, None, None, None), 0);
+        // the previous episode came from erai-720: the same group again
+        let mut prev = s("720p", "[Erai] Show - 04 (720p) WEB", Some("z"));
+        prev.binge_group = Some("erai-720".into());
+        assert_eq!(autoplay_pick(&list, Some(&prev), None, None), 1);
+        // a rule narrows the choice first
+        let rule = autoplay_rule("1080p.*web");
+        assert_eq!(autoplay_pick(&list, None, None, rule.as_ref()), 2);
+        // a rule nothing matches is ignored
+        let none = autoplay_rule("2160p");
+        assert_eq!(autoplay_pick(&list, None, None, none.as_ref()), 0);
+        // a broken pattern is no rule at all
+        assert!(autoplay_rule("(").is_none());
+        // the stream that played this video before wins over everything
+        assert_eq!(autoplay_pick(&list, Some(&prev), Some("c"), rule.as_ref()), 2);
+        assert_eq!(autoplay_pick(&list, None, Some("gone"), None), 0);
+    }
+
+    #[test]
+    fn autoplay_follows_the_release_family_without_binge_group() {
+        let list = vec![
+            s("1080p", "[SubsPlease] Show - 05 (1080p)", Some("a")),
+            s("720p", "[Erai-raws] Show - 05 [720p][Multiple Subtitle]", Some("b")),
+        ];
+        let prev = s("720p", "[Erai-raws] Show - 04 [720p][Multiple Subtitle]", Some("z"));
+        assert_eq!(autoplay_pick(&list, Some(&prev), None, None), 1);
+        let j = Json::parse(r#"{"name":"1080p","infoHash":"aa","behaviorHints":{"bingeGroup":"x|1080"}}"#).unwrap();
+        assert_eq!(Stream::from_json(&j, "T").binge_group.as_deref(), Some("x|1080"));
     }
 
     #[test]

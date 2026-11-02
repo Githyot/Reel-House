@@ -34,6 +34,8 @@ js = ["dep:rquickjs"]
 devproxy = ["app", "ureq/native-certs"]
 
 [dependencies]
+# user rules for choosing a stream by itself (Preferences > Playback)
+regex = "1"
 ureq = { version = "2.10", optional = true }
 # gzip (already built for ureq and png): the Anime4K shaders archive is unpacked inside the app, Android has no `tar`.
 flate2 = { version = "1", optional = true }

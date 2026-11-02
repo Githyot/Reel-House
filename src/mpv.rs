@@ -350,6 +350,22 @@ impl Mpv {
         }
     }
 
+    /// The sound of audio track `aid` ("auto" for the file's own choice) from `start` to `end`, decoded to 8 kHz mono
+    /// 16-bit samples (raw, little endian) in `out`, for comparing two audio tracks (`audiosync`). Tries a raw file
+    /// first, then WAV when this mpv's FFmpeg has no raw muxer; returns which one was written ("s16le" or "wav").
+    pub fn encode_pcm(candidates: &[PathBuf], url: &str, headers: &[(String, String)], aid: &str, start: f64, end: f64, out: &str, limit_secs: u64) -> Result<&'static str, String> {
+        let af = "lavfi=[aresample=8000,aformat=sample_fmts=s16:sample_rates=8000:channel_layouts=mono]";
+        let mut errs = Vec::new();
+        for of in ["s16le", "wav"] {
+            let _ = std::fs::remove_file(out);
+            match Self::encode_opts(candidates, url, headers, start, end, out, &[("vid", "no"), ("aid", aid), ("af", af), ("oac", "pcm_s16le"), ("of", of)], false, limit_secs) {
+                Ok(()) => return Ok(of),
+                Err(e) => errs.push(format!("{}: {}", of, e)),
+            }
+        }
+        Err(errs.join(" / "))
+    }
+
     pub fn encode(candidates: &[PathBuf], url: &str, headers: &[(String, String)], start: f64, end: f64, out: &str, picture: bool, limit_secs: u64) -> Result<(), String> {
         let extra: Vec<(&str, &str)> = if picture {
             vec![("aid", "no"), ("ovc", "mjpeg"), ("ovcopts", "strict=-1"), ("of", "image2"), ("ofopts", "update=1"), ("frames", "1"), ("vf", "scale=-2:360")]

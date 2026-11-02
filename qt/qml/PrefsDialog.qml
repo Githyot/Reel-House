@@ -249,6 +249,7 @@ Popup {
                         onPicked: function(i) { dlg.set("general.preferred_height", parseInt(ids[i])) }
                     }
                     PrefSwitch { title: Core.tr(Core.uiLang, "Play the next episode by itself"); subtitle: Core.tr(Core.uiLang, "When an episode ends, the next one starts"); checked: dlg.g.autoplay_next === true; onToggled: function(on) { dlg.set("general.autoplay_next", on) } }
+                    PrefEntry { first: false; title: Core.tr(Core.uiLang, "Rule for the stream that plays by itself (optional)"); placeholder: Core.tr(Core.uiLang, "e.g. 1080p.*(web|bluray). Empty: the best ranked, keeping the same release"); text: dlg.g.autoplay_rule || ""; onEdited: function(t) { dlg.set("general.autoplay_rule", t.trim()) } }
                     PrefSpin { title: Core.tr(Core.uiLang, "Next episode card"); subtitle: Core.tr(Core.uiLang, "Seconds before the end when the card appears"); from: 5; to: 120; step: 5; value: dlg.g.next_popup_secs || 30; onMoved: function(v) { dlg.set("general.next_popup_secs", v) } }
                     PrefSwitch { title: Core.tr(Core.uiLang, "Preview pictures"); subtitle: Core.tr(Core.uiLang, "Show a small picture above the seek bar while hovering it"); checked: dlg.g.thumbnails === true; onToggled: function(on) { dlg.set("general.thumbnails", on) } }
                     PrefSpin { title: Core.tr(Core.uiLang, "Skip button"); subtitle: Core.tr(Core.uiLang, "Seconds the Skip button in the player jumps forward"); from: 5; to: 300; step: 5; value: dlg.g.skip_seconds || 90; onMoved: function(v) { dlg.set("general.skip_seconds", v) } }
@@ -549,11 +550,20 @@ Popup {
                     PrefRow {
                         visible: !cloudGrp.acct
                         title: Core.tr(Core.uiLang, "Sync folder")
-                        subtitle: cloudGrp.st.folder ? cloudGrp.st.folder : Core.tr(Core.uiLang, "Not found. Install the cloud's desktop app and sign in there, or choose the folder.")
+                        subtitle: cloudGrp.st.folder ? cloudGrp.st.folder
+                                  : Qt.platform.os === "linux" && cloudGrp.prov !== "icloud" ? Core.tr(Core.uiLang, "Not found. On Linux, mount the cloud with rclone and press Detect, or choose the folder.")
+                                  : Core.tr(Core.uiLang, "Not found. Install the cloud's desktop app and sign in there, or choose the folder.")
                         selectable: true
                         FlatButton { anchors.verticalCenter: parent.verticalCenter; kind: "flat"; glyph: "undo"; implicitWidth: 34; implicitHeight: 34; visible: (cloudGrp.c.folder || "") !== ""; ToolTip.visible: hovered; ToolTip.text: Core.tr(Core.uiLang, "Use the folder found"); onClicked: dlg.set("backup.cloud.folder", "") }
                         FlatButton { anchors.verticalCenter: parent.verticalCenter; text: Core.tr(Core.uiLang, "Detect"); implicitHeight: 34; onClicked: Core.cmd({cmd: "cloud_detect"}) }
                         FlatButton { anchors.verticalCenter: parent.verticalCenter; text: Core.tr(Core.uiLang, "Choose"); implicitHeight: 34; onClicked: cloudFolderDlg.open() }
+                    }
+                    // Linux: a plain folder is not synced by anything (no Google Drive / OneDrive app there)
+                    PrefRow {
+                        visible: !cloudGrp.acct && !cloudGrp.gh && cloudGrp.st.folderSynced === false
+                        title: Core.tr(Core.uiLang, "This folder is not in the cloud")
+                        subtitle: Core.tr(Core.uiLang, "Linux has no Google Drive or OneDrive app, so nothing sends this folder to the cloud: the copies stay on this computer. Mount the cloud with rclone (or GNOME Online Accounts) and choose a folder inside it, or use \"Sign in with a code\".")
+                        FlatButton { anchors.verticalCenter: parent.verticalCenter; text: Core.tr(Core.uiLang, "How to"); implicitHeight: 34; onClicked: Qt.openUrlExternally(cloudGrp.prov === "onedrive" ? "https://rclone.org/onedrive/" : "https://rclone.org/drive/") }
                     }
                     // ---- GitHub: a personal access token and a private repository (cloud_github.rs) ----
                     PrefRow {
