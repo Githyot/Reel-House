@@ -72,7 +72,9 @@ impl Core {
                     _ => show.clone(),
                 };
                 match anilist::search(&*http, &q) {
-                    Ok(list) => match list.first() {
+                    // an episode of a series: a film or music video of the same name is never its songs (AniList answers
+                    // "Pokemon season 6" with a Pokémon film)
+                    Ok(list) => match list.iter().find(|f| karaoke::series_kind(&f.kind)) {
                         Some(f) => {
                             ids.push(f.id);
                             year = f.year;
