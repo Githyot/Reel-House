@@ -2266,7 +2266,10 @@ fn run_cmd(b: &Bridge, j: &Json) -> Json {
             "set_sub_layout" => c.set_sub_layout(j.get("pos").as_u64().unwrap_or(100) as u32, &j.get("align").str(), j.get("margin").as_u64().unwrap_or(0) as u32),
             "translate_subtitle" => {
                 use reelhouse::controller::SubSource;
-                let src = if j.get("file").str().is_empty() {
+                let track = j.get("track").as_i64().unwrap_or(0);
+                let src = if track > 0 {
+                    SubSource::Embedded(track)
+                } else if j.get("file").str().is_empty() {
                     SubSource::Candidate(j.get("index").as_u64().unwrap_or(0) as usize)
                 } else {
                     SubSource::File(j.get("file").str(), j.get("lang").str())

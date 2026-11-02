@@ -86,6 +86,7 @@ const TABLE: &[(&str, &str, &str)] = &[
     ("Subtitle to translate", "Legenda a traduzir", "Subtítulo a traducir"),
     ("Translate to", "Traduzir para", "Traducir a"),
     ("Translate", "Traduzir", "Traducir"),
+    ("built into the video", "embutida no vídeo", "incrustado en el vídeo"),
     ("No subtitles to translate yet", "Nenhuma legenda para traduzir ainda", "Aún no hay subtítulos para traducir"),
     ("Remove all", "Remover tudo", "Quitar todo"),
     ("Torrents of the same title are together, with its cover.", "Torrents do mesmo título ficam juntos, com a capa.", "Los torrents del mismo título van juntos, con su portada."),

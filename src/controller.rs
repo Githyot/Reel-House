@@ -2405,6 +2405,7 @@ impl Core {
             Msg::SubCands(token, list) => {
                 if let Some(s) = self.session.as_mut().filter(|s| s.id == token || s.token == token) {
                     s.sub_cands = list;
+                    self.events.push(Event::Session);
                 }
             }
             Msg::SubVariant(token, r) => {
@@ -2862,6 +2863,9 @@ impl Core {
             };
             (s.token, s.cancel.clone(), s.streams[s.cur].clone(), s.kind.clone(), s.sid.clone())
         };
+        // Anime catalogs (Kitsu, MAL, AniList) give ids most subtitle addons, OpenSubtitles first of all, do not
+        // know: ask them with the IMDb id too when the metadata has one.
+        let imdb_sid = self.session.as_ref().and_then(|s| imdb_episode_id(&s.sid, s.meta.as_ref().map(|m| m.imdb_id.as_str()).unwrap_or(""), &s.kind, s.ep.season, s.ep.episode));
 
         let st = self.settings.clone();
         let engine = self.engine.clone();
@@ -2883,7 +2887,9 @@ impl Core {
             });
         }
 
-        if reuse.is_none() && subs_on {
+        // The subtitles the addons offer are always asked for: the Subtitles menu and Forced translation list them
+        // even when automatic subtitles are off; only choosing and preparing one needs the setting.
+        if reuse.is_none() {
             let st = self.settings.clone();
             let cache = self.data_dir.join("subtitles");
             let target = st.target_lang(&self.system_lang);
@@ -2895,9 +2901,19 @@ impl Core {
                     // The release name of the file being played: subtitles that match it are asked for first,
                     // because their timing fits.
                     let names: Vec<String> = own_name.into_iter().collect();
-                    let found = if names.is_empty() { addons::fetch_subtitles(&*http, &st.addons, &kind, &sid) } else { addons::fetch_subtitles_for(&*http, &st.addons, &kind, &sid, &names) };
+                    let ask = |id: &str| if names.is_empty() { addons::fetch_subtitles(&*http, &st.addons, &kind, id) } else { addons::fetch_subtitles_for(&*http, &st.addons, &kind, id, &names) };
+                    let mut found = ask(&sid);
+                    if let Some(alt) = &imdb_sid {
+                        let more = ask(alt);
+                        for c in more.items {
+                            if !found.items.iter().any(|x| x.url == c.url) {
+                                found.items.push(c);
+                            }
+                        }
+                    }
+                    crate::debug::log("subs", &format!("{} subtitle(s) offered for {}{}{}", found.items.len(), sid, imdb_sid.as_deref().map(|a| format!(" (also asked as {})", a)).unwrap_or_default(), if found.errors.is_empty() { String::new() } else { format!(" | {}", found.errors.join("; ")) }));
                     send(tx, Msg::SubCands(token, found.items.clone()));
-                    if found.items.is_empty() {
+                    if !subs_on || found.items.is_empty() {
                         return Ok(None);
                     }
                     // the translator of "Automatic subtitles" in Preferences > Translators (none while subtitle translation is off)
@@ -3713,5 +3729,31 @@ impl Core {
     /// language of "Languages I know", else the system's. See `General::ui_lang`.
     pub fn ui_lang(&self) -> String {
         self.settings.general.ui_lang(&self.system_lang)
+    }
+}
+
+/// The IMDb id of an episode ("tt123:2:4") to ask subtitle addons with, when the id being played is another
+/// catalog's ("kitsu:…", "mal:…") and the metadata knows the IMDb id. None when the id already is an IMDb one.
+pub fn imdb_episode_id(sid: &str, imdb: &str, kind: &str, season: Option<i64>, episode: Option<i64>) -> Option<String> {
+    let imdb = imdb.split(':').next().unwrap_or("").trim();
+    if sid.starts_with("tt") || !imdb.starts_with("tt") {
+        return None;
+    }
+    if kind == "movie" {
+        return Some(imdb.to_string());
+    }
+    Some(format!("{}:{}:{}", imdb, season.unwrap_or(1), episode?))
+}
+
+#[cfg(test)]
+mod imdb_sid_tests {
+    use super::imdb_episode_id;
+
+    #[test]
+    fn anime_ids_get_the_imdb_episode() {
+        assert_eq!(imdb_episode_id("kitsu:46474:4", "tt30217403", "series", Some(2), Some(4)).as_deref(), Some("tt30217403:2:4"));
+        assert_eq!(imdb_episode_id("tt30217403:2:4", "tt30217403", "series", Some(2), Some(4)), None);
+        assert_eq!(imdb_episode_id("kitsu:1", "", "series", Some(1), Some(1)), None);
+        assert_eq!(imdb_episode_id("mal:1", "tt1", "movie", None, None).as_deref(), Some("tt1"));
     }
 }
