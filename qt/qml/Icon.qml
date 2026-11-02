@@ -20,20 +20,26 @@ Item {
     readonly property bool stroked: !solid && Theme.icons === "lucide" && Lucide.paths[key] !== undefined
     implicitWidth: size
     implicitHeight: size
-    Shape {
-        width: 24
-        height: 24
-        scale: ic.size / 24
-        transformOrigin: Item.TopLeft
-        preferredRendererType: Shape.CurveRenderer
-        // Lucide (Apple theme): outlines with round ends; GNOME: the filled symbols above
-        ShapePath {
-            fillColor: ic.stroked ? (ic.filled ? ic.fillColor : "transparent") : (ic.filled ? ic.fillColor : ic.color)
-            strokeColor: ic.stroked ? ic.color : "transparent"
-            strokeWidth: ic.stroked ? Theme.iconStroke : 0
-            capStyle: ShapePath.RoundCap
-            joinStyle: ShapePath.RoundJoin
-            PathSvg { path: ic.stroked ? Lucide.paths[ic.key] : (Material.paths[ic.key] || "") }
+    // The Shape is made only once the icon is in a window. Icons built inside an asynchronous Loader (Study, Learn,
+    // the Pomodoro) are completed before they have a window, and there the CurveRenderer shapes stayed blank on HP's
+    // Fedora (AMD) while the same icons made later (list rows) drew fine.
+    Loader {
+        active: ic.Window.window !== null
+        sourceComponent: Shape {
+            width: 24
+            height: 24
+            scale: ic.size / 24
+            transformOrigin: Item.TopLeft
+            preferredRendererType: Shape.CurveRenderer
+            // Lucide (Apple theme): outlines with round ends; GNOME: the filled symbols above
+            ShapePath {
+                fillColor: ic.stroked ? (ic.filled ? ic.fillColor : "transparent") : (ic.filled ? ic.fillColor : ic.color)
+                strokeColor: ic.stroked ? ic.color : "transparent"
+                strokeWidth: ic.stroked ? Theme.iconStroke : 0
+                capStyle: ShapePath.RoundCap
+                joinStyle: ShapePath.RoundJoin
+                PathSvg { path: ic.stroked ? Lucide.paths[ic.key] : (Material.paths[ic.key] || "") }
+            }
         }
     }
 }

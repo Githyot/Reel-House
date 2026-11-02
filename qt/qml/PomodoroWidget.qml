@@ -85,19 +85,24 @@ Item {
             readonly property real d: pw.side ? Math.min(pw.width, 132) : (pw.compact ? 168 : 208)
             width: parent.width; height: d
             readonly property real frac: Math.max(0, Math.min(1, pw.leftMs / pw.lengthMs))
-            Shape {
-                id: rs
+            // made once in a window (see Icon.qml: blank when built inside an asynchronous Loader)
+            Loader {
+                active: ring.Window.window !== null
                 width: ring.d; height: ring.d
                 anchors.horizontalCenter: parent.horizontalCenter
-                preferredRendererType: Shape.CurveRenderer
-                readonly property real r: ring.d / 2 - 8
-                ShapePath {
-                    strokeColor: Theme.c.fill3; strokeWidth: 10; fillColor: "transparent"
-                    PathAngleArc { centerX: ring.d / 2; centerY: ring.d / 2; radiusX: rs.r; radiusY: rs.r; startAngle: 0; sweepAngle: 360 }
-                }
-                ShapePath {
-                    strokeColor: ring.frac > 0 ? pw.tone : "transparent"; strokeWidth: 10; fillColor: "transparent"; capStyle: ShapePath.RoundCap
-                    PathAngleArc { centerX: ring.d / 2; centerY: ring.d / 2; radiusX: rs.r; radiusY: rs.r; startAngle: -90; sweepAngle: 360 * ring.frac }
+                sourceComponent: Shape {
+                    id: rs
+                    width: ring.d; height: ring.d
+                    preferredRendererType: Shape.CurveRenderer
+                    readonly property real r: ring.d / 2 - 8
+                    ShapePath {
+                        strokeColor: Theme.c.fill3; strokeWidth: 10; fillColor: "transparent"
+                        PathAngleArc { centerX: ring.d / 2; centerY: ring.d / 2; radiusX: rs.r; radiusY: rs.r; startAngle: 0; sweepAngle: 360 }
+                    }
+                    ShapePath {
+                        strokeColor: ring.frac > 0 ? pw.tone : "transparent"; strokeWidth: 10; fillColor: "transparent"; capStyle: ShapePath.RoundCap
+                        PathAngleArc { centerX: ring.d / 2; centerY: ring.d / 2; radiusX: rs.r; radiusY: rs.r; startAngle: -90; sweepAngle: 360 * ring.frac }
+                    }
                 }
             }
             Column {

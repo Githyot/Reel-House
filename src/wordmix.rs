@@ -39,6 +39,17 @@ pub struct Span {
     /// The word of the known language it replaced, as it was written.
     pub original: String,
     pub reading: String,
+    /// The dictionary form when `word` is another form of it, copied from the line heard ("あった" -> "ある");
+    /// empty when `word` is the dictionary form itself.
+    pub base: String,
+}
+
+/// A word of the line in the original language said at the same time (the Japanese subtitle of the audio): as it
+/// is written there ("あった") and its dictionary form ("ある").
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Heard {
+    pub surface: String,
+    pub base: String,
 }
 
 /// "known word (lower case) -> learned word" for one pair of languages (3-letter codes).
@@ -48,6 +59,8 @@ pub struct Lexicon {
     pub from: String,
     pub to: String,
     map: HashMap<String, Entry>,
+    /// Every learned word a key can stand for, best known first (the line heard picks the one actually said).
+    all: HashMap<String, Vec<Entry>>,
     /// The most words a key has ("ice cream" = 2), for the phrase lookup.
     max_words: usize,
     /// The longest key in characters (texts without spaces: Japanese, Chinese).
@@ -148,18 +161,29 @@ impl Lexicon {
         if target.trim().is_empty() {
             return;
         }
+        let reading = if reading == target { String::new() } else { reading.to_string() };
+        let entry = Entry { target: target.trim().to_string(), reading, strength };
         for k in keys_of(&self.from, translation) {
-            if self.map.get(&k).map(|e| e.strength >= strength).unwrap_or(false) {
-                continue;
+            let list = self.all.entry(k.clone()).or_default();
+            if !list.iter().any(|e| e.target == entry.target) {
+                list.push(entry.clone());
+                list.sort_by(|a, b| b.strength.partial_cmp(&a.strength).unwrap_or(std::cmp::Ordering::Equal));
             }
             self.max_words = self.max_words.max(k.split_whitespace().count());
             self.max_chars = self.max_chars.max(k.chars().count());
-            let reading = if reading == target { String::new() } else { reading.to_string() };
-            self.map.insert(k, Entry { target: target.trim().to_string(), reading, strength });
+            if self.map.get(&k).map(|e| e.strength >= strength).unwrap_or(false) {
+                continue;
+            }
+            self.map.insert(k, entry.clone());
         }
     }
 
     /// The learned word for a known word or phrase (any case).
+    /// The words of the known language that have a learned word (the credits quiz takes its wrong options here).
+    pub fn keys(&self) -> Vec<String> {
+        self.map.keys().cloned().collect()
+    }
+
     pub fn lookup(&self, key: &str) -> Option<&Entry> {
         self.map.get(&key.to_lowercase())
     }
@@ -257,11 +281,51 @@ pub fn words(text: &str) -> Vec<String> {
 }
 
 /// A candidate replacement: byte range in the text, the entry, how many words it covers.
-struct Hit<'a> {
+struct Hit {
     a: usize,
     b: usize,
-    entry: &'a Entry,
+    entry: Entry,
     chars: usize,
+    /// The word of the line heard it stands for (`swap_heard`).
+    heard: Option<usize>,
+}
+
+impl Lexicon {
+    /// The learned word for a key: the best known one, or (with the line heard) the first one said in it and not
+    /// used yet.
+    fn find(&self, key: &str, heard: Option<&[Heard]>, used: &[bool]) -> Option<(Entry, Option<usize>)> {
+        match heard {
+            None => self.map.get(key).map(|e| (e.clone(), None)),
+            Some(h) => self.all.get(key)?.iter().find_map(|e| {
+                h.iter().enumerate().position(|(i, x)| !used[i] && x.base == e.target).map(|i| (e.clone(), Some(i)))
+            }),
+        }
+    }
+}
+
+/// The reading of another form of a word, from the reading of its dictionary form: the part both forms share keeps
+/// its reading and the new ending is read as written ("食べる" "たべる" + "食べた" -> "たべた"). Empty when it cannot
+/// be told or the form is all kana.
+pub fn form_reading(base: &str, reading: &str, form: &str) -> String {
+    if reading.is_empty() || form.chars().all(crate::knowledge::is_kana) {
+        return String::new();
+    }
+    let (b, f): (Vec<char>, Vec<char>) = (base.chars().collect(), form.chars().collect());
+    let p = b.iter().zip(f.iter()).take_while(|(x, y)| x == y).count();
+    if p == 0 {
+        return String::new();
+    }
+    let tail: String = b[p..].iter().collect();
+    let new_tail: String = f[p..].iter().collect();
+    if !reading.ends_with(tail.as_str()) || !new_tail.chars().all(crate::knowledge::is_kana) {
+        return String::new();
+    }
+    let r = format!("{}{}", &reading[..reading.len() - tail.len()], new_tail);
+    if r == form {
+        String::new()
+    } else {
+        r
+    }
 }
 
 /// Replaces up to `max` words of `text` (a line in `lex.from`) with learned words. Whole words or phrases only,
@@ -269,9 +333,24 @@ struct Hit<'a> {
 /// (seeing it again helps most). A line of a single word is left alone (no sentence around it to guess from).
 /// Returns the new text and where the new words are.
 pub fn swap_line(lex: &Lexicon, text: &str, max: usize) -> (String, Vec<Span>) {
+    swap_with(lex, text, max, None)
+}
+
+/// `swap_line` checked against the line said at the same time in the original language (`heard`, the Japanese
+/// subtitle of the audio): a word is replaced only when one of its learned words is in that line, and what goes in
+/// is that word as it was said there ("tinha" -> "あった", not "ある"). Nothing heard = nothing replaced.
+pub fn swap_heard(lex: &Lexicon, text: &str, max: usize, heard: &[Heard]) -> (String, Vec<Span>) {
+    if heard.is_empty() {
+        return (text.to_string(), vec![]);
+    }
+    swap_with(lex, text, max, Some(heard))
+}
+
+fn swap_with(lex: &Lexicon, text: &str, max: usize, heard: Option<&[Heard]>) -> (String, Vec<Span>) {
     if lex.is_empty() || max == 0 || text.trim().is_empty() {
         return (text.to_string(), vec![]);
     }
+    let mut used = vec![false; heard.map(|h| h.len()).unwrap_or(0)];
     let mut hits: Vec<Hit> = vec![];
     if no_spaces(&lex.from) {
         // no spaces: the longest key at each place (two characters at least)
@@ -282,8 +361,11 @@ pub fn swap_line(lex: &Lexicon, text: &str, max: usize) -> (String, Vec<Span>) {
             for len in (2..=lex.max_chars.min(idx.len() - i)).rev() {
                 let a = idx[i].0;
                 let b = if i + len < idx.len() { idx[i + len].0 } else { text.len() };
-                if let Some(e) = lex.map.get(&text[a..b]) {
-                    hits.push(Hit { a, b, entry: e, chars: len });
+                if let Some((entry, h)) = lex.find(&text[a..b], heard, &used) {
+                    if let Some(i) = h {
+                        used[i] = true;
+                    }
+                    hits.push(Hit { a, b, entry, chars: len, heard: h });
                     i += len;
                     found = true;
                     break;
@@ -311,8 +393,11 @@ pub fn swap_line(lex: &Lexicon, text: &str, max: usize) -> (String, Vec<Span>) {
                 if n == 1 && stop_word(&lex.from, &key) {
                     continue;
                 }
-                if let Some(e) = lex.map.get(&key) {
-                    hits.push(Hit { a, b, entry: e, chars: key.chars().count() });
+                if let Some((entry, h)) = lex.find(&key, heard, &used) {
+                    if let Some(i) = h {
+                        used[i] = true;
+                    }
+                    hits.push(Hit { a, b, entry, chars: key.chars().count(), heard: h });
                     step = n;
                     break;
                 }
@@ -337,10 +422,15 @@ pub fn swap_line(lex: &Lexicon, text: &str, max: usize) -> (String, Vec<Span>) {
         let h = &hits[i];
         out.push_str(&text[at..h.a]);
         let original = &text[h.a..h.b];
-        let word = with_case(original, &h.entry.target);
+        let (word, reading, base) = match h.heard.and_then(|i| heard.and_then(|x| x.get(i))) {
+            Some(said) if said.surface != h.entry.target => {
+                (said.surface.clone(), form_reading(&h.entry.target, &h.entry.reading, &said.surface), h.entry.target.clone())
+            }
+            _ => (with_case(original, &h.entry.target), h.entry.reading.clone(), String::new()),
+        };
         let start = out.chars().count();
         out.push_str(&word);
-        spans.push(Span { start, end: start + word.chars().count(), word, original: original.to_string(), reading: h.entry.reading.clone() });
+        spans.push(Span { start, end: start + word.chars().count(), word, original: original.to_string(), reading, base });
         at = h.b;
     }
     out.push_str(&text[at..]);
@@ -602,5 +692,39 @@ mod tests {
         assert_eq!(ass_color("#80FF0000"), ("&H0000FF&".to_string(), "&H7F&".to_string()));
         // braces of the text cannot open an override block
         assert!(!ass_line("a {b} c", &[], &Look::default(), 1280.0, false).contains("{b}"));
+    }
+
+    #[test]
+    fn heard_line_decides_the_word_and_its_form() {
+        let mut l = lex();
+        l.add("existir; estar", "ある", "", 0.9);
+        l.add("estar; ficar", "いる", "", 0.5);
+        let h = |pairs: &[(&str, &str)]| pairs.iter().map(|(s, b)| Heard { surface: s.to_string(), base: b.to_string() }).collect::<Vec<_>>();
+        // the form said goes in, with its reading worked out from the dictionary form
+        let (t, s) = swap_heard(&l, "Eu quero comer agora", 1, &h(&[("食べた", "食べる")]));
+        assert_eq!(t, "Eu quero 食べた agora");
+        assert_eq!((s[0].reading.as_str(), s[0].base.as_str()), ("たべた", "食べる"));
+        // "estar" is いる in this line, not the better known ある; kana forms need no reading
+        let (t, s) = swap_heard(&l, "O gato vai estar aqui", 2, &h(&[("いた", "いる")]));
+        assert_eq!(t, "O gato vai いた aqui");
+        assert_eq!((s[0].reading.as_str(), s[0].base.as_str()), ("", "いる"));
+        let (t, _) = swap_heard(&l, "O gato vai estar aqui", 2, &h(&[("あった", "ある")]));
+        assert_eq!(t, "O gato vai あった aqui");
+        // the dictionary form itself said: no base
+        assert_eq!(swap_heard(&l, "O gato vai estar aqui", 1, &h(&[("ある", "ある")])).1[0].base, "");
+        // not said in the audio, or nothing heard: nothing swapped
+        assert!(swap_heard(&l, "Eu quero comer agora", 1, &h(&[("飲んだ", "飲む")])).1.is_empty());
+        assert!(swap_heard(&l, "Eu quero comer agora", 1, &[]).1.is_empty());
+        // the old way is unchanged
+        assert_eq!(swap_line(&l, "O gato vai estar aqui", 1).0, "O gato vai ある aqui");
+    }
+
+    #[test]
+    fn readings_of_other_forms() {
+        assert_eq!(form_reading("食べる", "たべる", "食べました"), "たべました");
+        assert_eq!(form_reading("書く", "かく", "書いて"), "かいて");
+        assert_eq!(form_reading("ある", "", "あった"), "");
+        assert_eq!(form_reading("行く", "いく", "いった"), "");
+        assert_eq!(form_reading("高い", "たかい", "高かった"), "たかかった");
     }
 }

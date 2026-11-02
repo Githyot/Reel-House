@@ -279,12 +279,15 @@ qt_add_resources(reelhouse-qt "app" PREFIX "/" FILES
     qml/StatusPage.qml
     qml/StreamRow.qml
     qml/StudyAdd.qml
+    qml/StudyTrash.qml
     qml/StudyBrowse.qml
     qml/StudyBuddy.qml
     qml/StudyHeader.qml
     qml/StudyPage.qml
     qml/StudyQuiz.qml
     qml/StudyReview.qml
+    qml/JlabCard.qml
+    qml/JlabSettings.qml
     qml/StudySettings.qml
     qml/StudySidebar.qml
     qml/StudyStats.qml

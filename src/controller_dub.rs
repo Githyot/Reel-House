@@ -505,6 +505,9 @@ impl Core {
         self.audio_sync.dub_opening.clear();
         self.audio_sync.extra_urls.clear();
         self.audio_sync.extra_opened.clear();
+        self.audio_sync.points.clear();
+        self.audio_sync.resync_at = None;
+        self.audio_sync.last_tick = None;
         // answers still on the way are dropped
         self.audio_sync.dub_gen += 1;
         for (base, id) in std::mem::take(&mut self.audio_sync.dub_torrents) {

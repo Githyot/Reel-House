@@ -603,34 +603,105 @@ Item {
     }
 
     // ---- next episode card ----
+    // A 16:9 picture (the episode's own, else the series' backdrop, else a play glyph: never an empty grey box), the
+    // episode code on the picture, the name on up to two lines, the countdown in a light grey that reads on the dark
+    // panel (the accent could be too dark there) and a bar that empties until the next episode starts.
     Rectangle {
         id: nextCard
-        visible: page.playing && !!page.p.next
-        anchors { right: parent.right; rightMargin: 24; bottom: parent.bottom; bottomMargin: 130 }
-        width: Math.max(0, Math.min(460, parent.width - 48))
-        height: 118
+        readonly property var n: page.p.next || null
+        readonly property real secs: n ? Math.max(0, n.secondsLeft) : 0
+        readonly property string pic: n ? (n.thumbnail || n.fallback || "") : ""
+        visible: page.playing && n !== null
+        anchors { right: parent.right; rightMargin: Theme.mobile ? 16 : 24; bottom: parent.bottom; bottomMargin: 130 }
+        width: Math.max(0, Math.min(Theme.mobile ? 420 : 460, parent.width - (Theme.mobile ? 32 : 48)))
+        height: Theme.mobile ? 108 : 124
         radius: page.o.cardR
         color: page.o.panel
         border.width: page.o.strokeW
         border.color: page.o.stroke
-        RowLayout {
-            anchors { fill: parent; margins: 12 }
-            spacing: 12
+        // the picture (click = play now)
+        Item {
+            id: nextPic
+            anchors { left: parent.left; leftMargin: 10; top: parent.top; topMargin: 10; bottom: parent.bottom; bottomMargin: 13 }
+            width: Math.round(height * 16 / 9)
+            Rectangle { anchors.fill: parent; radius: Math.max(4, page.o.cardR - 4); color: "#26ffffff" }
+            Icon { anchors.centerIn: parent; name: "play"; size: 28; color: "#99ffffff"; visible: nextPicImg.status !== Image.Ready }
             RoundedPicture {
-                visible: !!(page.p.next && page.p.next.thumbnail)
-                Layout.preferredWidth: 168
-                Layout.fillHeight: true
+                id: nextPicImg
+                anchors.fill: parent
                 radius: Math.max(4, page.o.cardR - 4)
-                url: page.p.next && page.p.next.thumbnail ? page.p.next.thumbnail : ""
+                placeholder: "transparent"
+                url: nextCard.pic
+                fallback: nextCard.n && nextCard.n.thumbnail && nextCard.n.fallback ? nextCard.n.fallback : ""
+                visible: nextCard.pic !== ""
             }
-            ColumnLayout {
+            // hover: darken and show the play glyph
+            Rectangle {
+                anchors.fill: parent; radius: Math.max(4, page.o.cardR - 4)
+                color: "#73000000"
+                visible: nextPicArea.containsMouse && nextPicImg.status === Image.Ready
+                Icon { anchors.centerIn: parent; name: "play"; size: 30; color: "#ffffff" }
+            }
+            // the episode code on the picture
+            Rectangle {
+                visible: !!(nextCard.n && nextCard.n.label)
+                anchors { left: parent.left; leftMargin: 6; bottom: parent.bottom; bottomMargin: 6 }
+                width: codeText.implicitWidth + 12; height: codeText.implicitHeight + 4
+                radius: 4
+                color: "#cc000000"
+                Text { id: codeText; anchors.centerIn: parent; text: nextCard.n ? nextCard.n.label : ""; color: "#ffffff"; font.pixelSize: 11; font.weight: Font.DemiBold; font.family: Theme.type.family }
+            }
+            MouseArea {
+                id: nextPicArea
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: Core.cmd({cmd: "next_episode"})
+            }
+        }
+        ColumnLayout {
+            anchors { left: nextPic.right; leftMargin: 12; right: nextClose.left; rightMargin: 4; top: parent.top; topMargin: 10; bottom: parent.bottom; bottomMargin: 13 }
+            spacing: 2
+            Text {
                 Layout.fillWidth: true
-                spacing: 4
-                Text { text: Core.tr(Core.uiLang, "Next episode") + (page.p.next ? " · " + Math.ceil(page.p.next.secondsLeft) + " s" : ""); color: page.accentInk; font.pixelSize: 12; font.weight: page.o.headWeight; font.family: Theme.type.family }
-                Text { Layout.fillWidth: true; text: page.p.next ? page.p.next.title : ""; color: page.o.fg; font.pixelSize: 16; font.weight: page.o.titleWeight; font.family: Theme.type.family; elide: Text.ElideRight }
-                OsdButton { kind: "accent"; pill: page.ps !== "fluent"; glyph: "play"; text: Core.tr(Core.uiLang, "Play now"); onClicked: Core.cmd({cmd: "next_episode"}) }
+                text: Core.tr(Core.uiLang, "Next episode") + " · " + Math.ceil(nextCard.secs) + " s"
+                color: page.o.dim; font.pixelSize: 12; font.weight: page.o.headWeight; font.family: Theme.type.family
+                elide: Text.ElideRight
             }
-            OsdButton { Layout.alignment: Qt.AlignTop; kind: "round"; glyph: "close"; iconSize: 16; onClicked: Core.cmd({cmd: "dismiss_next"}) }
+            Text {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                verticalAlignment: Text.AlignTop
+                // the name alone (the code is on the picture); the full title when the episode has no name
+                text: nextCard.n ? (nextCard.n.name || nextCard.n.title) : ""
+                color: page.o.fg; font.pixelSize: Theme.mobile ? 14 : 15; font.weight: page.o.titleWeight; font.family: Theme.type.family
+                wrapMode: Text.WordWrap; maximumLineCount: 2; elide: Text.ElideRight
+                lineHeight: 1.05
+            }
+            OsdButton {
+                kind: "accent"; pill: page.ps !== "fluent"; glyph: "play"
+                text: Core.tr(Core.uiLang, "Play now")
+                onClicked: Core.cmd({cmd: "next_episode"})
+            }
+        }
+        OsdButton {
+            id: nextClose
+            anchors { right: parent.right; rightMargin: 6; top: parent.top; topMargin: 6 }
+            kind: "round"; glyph: "close"; iconSize: 16
+            onClicked: Core.cmd({cmd: "dismiss_next"})
+        }
+        // the countdown: a thin line along the bottom that empties until the next episode starts
+        Rectangle {
+            id: nextTrack
+            anchors { left: parent.left; right: parent.right; bottom: parent.bottom; leftMargin: Math.max(10, page.o.cardR); rightMargin: Math.max(10, page.o.cardR); bottomMargin: 5 }
+            height: 3; radius: 1.5
+            color: "#26ffffff"
+            Rectangle {
+                height: parent.height; radius: parent.radius
+                width: nextCard.n && nextCard.n.total > 0 ? parent.width * Math.min(1, nextCard.secs / nextCard.n.total) : 0
+                color: Theme.c.accent
+                Behavior on width { NumberAnimation { duration: 400 } }
+            }
         }
     }
 
@@ -908,6 +979,21 @@ Item {
                     }
                 }
                 Item { Layout.fillWidth: true }
+                // the macaw's button: the learned words it swapped into the subtitle this episode, and flashcards of them
+                OsdButton {
+                    id: swBtn
+                    visible: page.arr(page.p.studySwaps).length > 0
+                    kind: "osd"; active: swapsPop.visible
+                    ToolTip.visible: hovered; ToolTip.text: Core.tr(Core.uiLang, "Words the macaw swapped in this episode")
+                    onClicked: swapsPop.openAbove(swBtn)
+                    Mascot { anchors.centerIn: parent; size: 28; mood: swapsPop.visible ? "happy" : "peek"; animate: false; tappable: false }
+                    Rectangle {
+                        anchors { right: parent.right; top: parent.top; rightMargin: 2; topMargin: 2 }
+                        width: Math.max(16, swCount.implicitWidth + 8); height: 16; radius: 8
+                        color: Theme.c.accent
+                        Text { id: swCount; anchors.centerIn: parent; text: page.arr(page.p.studySwaps).length; color: Theme.c.accentFg; font.pixelSize: 10; font.weight: Font.Bold; font.family: Theme.type.family }
+                    }
+                }
                 OsdButton { visible: xray.hasData && !Theme.mobile; kind: "osd"; active: xray.open; text: "X-Ray"; ToolTip.visible: hovered; ToolTip.text: Core.tr(Core.uiLang, "Cast, music and trivia of this moment"); onClicked: { xray.pinned = !xray.open; if (!xray.pinned) { xray.autoOpened = false; xray.hoverOpen = false } } }
                 OsdButton { id: qBtn; kind: "osd"; active: qMenu.visible; glyph: "quality"; ToolTip.visible: hovered; ToolTip.text: Core.tr(Core.uiLang, "Video quality and torrent"); onClicked: { qMenu.entries = page.qualityEntries(); qMenu.openAbove(qBtn) } }
                 OsdButton { id: aBtn; kind: "osd"; active: aMenu.visible; glyph: "audio"; ToolTip.visible: hovered; ToolTip.text: Core.tr(Core.uiLang, "Audio track"); onClicked: { aMenu.entries = page.audioEntries(); aMenu.openAbove(aBtn) } }
@@ -1522,6 +1608,60 @@ Item {
                 spacing: 8
                 TextEdit { id: hashText; width: parent.width - copyBtn.width - 8; readOnly: true; selectByMouse: true; wrapMode: TextEdit.WrapAnywhere; text: page.p.infoHash || ""; color: page.o.fg; selectionColor: Theme.c.accent; selectedTextColor: Theme.c.accentFg; font.pixelSize: 12; font.family: Theme.type.mono; anchors.verticalCenter: parent.verticalCenter }
                 OsdButton { id: copyBtn; kind: "tonal"; glyph: "copy"; iconSize: 16; text: Core.tr(Core.uiLang, "Copy"); implicitHeight: 32; anchors.verticalCenter: parent.verticalCenter; onClicked: { hashText.selectAll(); hashText.copy(); hashText.deselect(); Core.toast(Core.tr(Core.uiLang, "Copied")) } }
+            }
+        }
+    }
+
+    // ---- the words the macaw swapped into the subtitle this episode (studyplay.rs `player.studySwaps`) ----
+    OsdPop {
+        id: swapsPop
+        contentWidth: 360
+        contentItem: Column {
+            width: 360
+            spacing: 10
+            Row {
+                spacing: 10
+                Mascot { size: 44; mood: "happy"; animate: false; tappable: false }
+                Column {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 300
+                    Text { width: parent.width; wrapMode: Text.Wrap; text: Core.tr(Core.uiLang, "Words I swapped in this episode"); color: page.o.fg; font.pixelSize: page.o.titleSize; font.weight: page.o.titleWeight; font.family: Theme.type.family }
+                    Text { width: parent.width; wrapMode: Text.Wrap; text: Core.tr(Core.uiLang, "I put the words you learned into the subtitle. At the credits I ask you about them."); color: page.o.dim; font.pixelSize: 12; font.family: Theme.type.family }
+                }
+            }
+            ListView {
+                id: swList
+                width: parent.width
+                height: Math.min(contentHeight, 300)
+                clip: true
+                spacing: 6
+                model: page.arr(page.p.studySwaps).length
+                boundsBehavior: Flickable.StopAtBounds
+                delegate: Rectangle {
+                    required property int index
+                    readonly property var w: page.arr(page.p.studySwaps)[index] || ({})
+                    width: swList.width
+                    height: swCol.implicitHeight + 14
+                    radius: Math.min(page.o.cardR, 12)
+                    color: "#1fffffff"
+                    Column {
+                        id: swCol
+                        x: 12; y: 7
+                        width: parent.width - 24
+                        spacing: 2
+                        Text {
+                            width: parent.width; wrapMode: Text.Wrap; textFormat: Text.StyledText
+                            text: "<b>" + (w.word || "") + "</b>" + (w.reading ? " <font color='#b0ffffff'>" + w.reading + "</font>" : "") + "  →  " + (w.original || "") + (w.base ? " <font color='#b0ffffff'>(" + Core.tr(Core.uiLang, "form of") + " " + w.base + ")</font>" : "")
+                            color: page.o.fg; font.pixelSize: 15; font.family: Theme.type.family
+                        }
+                        Text { width: parent.width; wrapMode: Text.Wrap; text: w.plain || ""; color: page.o.dim; font.pixelSize: 12; font.italic: true; font.family: Theme.type.family }
+                    }
+                }
+            }
+            Row {
+                spacing: 8
+                OsdButton { kind: "accent"; pill: page.ps !== "fluent"; glyph: "study"; text: Core.tr(Core.uiLang, "Make flashcards"); onClicked: Core.cmd({cmd: "study_swaps_cards"}) }
+                OsdButton { kind: "tonal"; pill: page.ps !== "fluent"; text: Core.tr(Core.uiLang, "Close"); onClicked: swapsPop.close() }
             }
         }
     }

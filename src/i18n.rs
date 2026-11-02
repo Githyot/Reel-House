@@ -632,6 +632,23 @@ const TABLE: &[(&str, &str, &str)] = &[
     ("Open folder", "Abrir pasta", "Abrir carpeta"),
     ("Delete", "Apagar", "Borrar"),
     ("Report cleared", "Relatório apagado", "Informe borrado"),
+    ("Trash", "Lixeira", "Papelera"),
+    ("Play all audio", "Tocar todo o áudio", "Reproducir todo el audio"),
+    ("The sound player could not start (mpv).", "O player de som não iniciou (mpv).", "El reproductor de sonido no arrancó (mpv)."),
+    ("This card's sound file is missing. Import the deck's .apkg (with media) to get its sounds.", "Falta o arquivo de som deste cartão. Importe o .apkg do deck (com mídia) para ter os sons.", "Falta el archivo de sonido de esta tarjeta. Importa el .apkg del mazo (con medios) para tener los sonidos."),
+    ("Delete for good", "Apagar de vez", "Borrar para siempre"),
+    ("Empty trash", "Esvaziar lixeira", "Vaciar papelera"),
+    ("just now", "agora", "ahora"),
+    ("(empty card)", "(cartão vazio)", "(tarjeta vacía)"),
+    ("The trash is empty.", "A lixeira está vazia.", "La papelera está vacía."),
+    ("Deleted cards and decks stay here for 30 days. Restore brings them back with what you learned about them.", "Cartões e decks apagados ficam aqui por 30 dias. Restaurar traz de volta com o que você já aprendeu deles.", "Las tarjetas y mazos borrados quedan aquí 30 días. Restaurar los devuelve con lo que aprendiste de ellos."),
+    ("Delete card", "Excluir cartão", "Borrar tarjeta"),
+    ("Restored.", "Restaurado.", "Restaurado."),
+    ("Card moved to the trash.", "Cartão movido para a lixeira.", "Tarjeta movida a la papelera."),
+    ("Deck moved to the trash.", "Deck movido para a lixeira.", "Mazo movido a la papelera."),
+    ("That is no longer in the trash.", "Isso não está mais na lixeira.", "Eso ya no está en la papelera."),
+    ("it goes to the trash with its cards; you can restore it for 30 days.", "vai para a lixeira com os cartões; dá para restaurar por 30 dias.", "va a la papelera con sus tarjetas; puedes restaurarlo durante 30 días."),
+    ("Answer: 1 Again · 2 Hard · 3 Good · 4 Easy", "Responder: 1 De novo · 2 Difícil · 3 Bom · 4 Fácil", "Responder: 1 Otra vez · 2 Difícil · 3 Bien · 4 Fácil"),
 
     ("Moving background", "Fundo em movimento", "Fondo en movimiento"),
     ("The colours drift all the time. Looks nice but uses processor; off, they only change with the cover", "As cores se movem o tempo todo. Fica bonito mas usa processador; desligado, elas só mudam com a capa", "Los colores se mueven todo el tiempo. Se ve bien pero usa procesador; apagado, solo cambian con la portada"),
@@ -1401,6 +1418,19 @@ const TABLE: &[(&str, &str, &str)] = &[
     ("Play the line again", "Ouvir a fala de novo", "Escuchar la frase otra vez"),
     ("What does this line mean?", "O que essa fala quer dizer?", "¿Qué significa esta frase?"),
     ("What does this word mean?", "O que essa palavra quer dizer?", "¿Qué significa esta palabra?"),
+    ("The macaw's quiz", "Quiz da arara", "Quiz del guacamayo"),
+    ("I swapped a word in this line. What is its right translation?", "Troquei uma palavra nesta fala. Qual é a tradução certa dela?", "Cambié una palabra en esta línea. ¿Cuál es su traducción correcta?"),
+    ("Words the macaw swapped in this episode", "Palavras que a arara trocou neste episódio", "Palabras que el guacamayo cambió en este episodio"),
+    ("Words I swapped in this episode", "Palavras que troquei neste episódio", "Palabras que cambié en este episodio"),
+    ("I put the words you learned into the subtitle. At the credits I ask you about them.", "Coloquei na legenda as palavras que você aprendeu. Nos créditos eu pergunto sobre elas.", "Puse en el subtítulo las palabras que aprendiste. En los créditos te pregunto por ellas."),
+    ("Make flashcards", "Criar flashcards", "Crear tarjetas"),
+    ("No subtitle in the language of the audio: words are swapped only when one is found (Preferences > Study).", "Sem legenda no idioma do áudio: só troco palavras quando achar uma (Preferências > Estudo).", "Sin subtítulo en el idioma del audio: solo cambio palabras cuando encuentre uno (Preferencias > Estudio)."),
+    ("form of", "forma de", "forma de"),
+    ("Only words said in the audio", "Só palavras ditas no áudio", "Solo palabras dichas en el audio"),
+    ("A word is swapped only when the subtitle in the language of the audio (built in, a file or from your addons) has it at that moment, copied as it is said there. Without that subtitle, no word is swapped.", "Uma palavra só é trocada quando a legenda no idioma do áudio (embutida, arquivo ou dos seus addons) a tem naquele momento, copiada como é dita ali. Sem essa legenda, nenhuma palavra é trocada.", "Una palabra solo se cambia cuando el subtítulo en el idioma del audio (incluido, un archivo o de tus addons) la tiene en ese momento, copiada como se dice allí. Sin ese subtítulo, no se cambia ninguna palabra."),
+    ("No swapped words in this episode yet.", "Ainda não troquei nenhuma palavra neste episódio.", "Aún no cambié ninguna palabra en este episodio."),
+    ("These words are already in Seu Reels.", "Essas palavras já estão no Seu Reels.", "Estas palabras ya están en Seu Reels."),
+    ("Flashcards added to Seu Reels.", "Flashcards adicionados ao Seu Reels.", "Tarjetas añadidas a Seu Reels."),
     ("Put the words of the line you heard in order", "Coloque em ordem as palavras da fala que você ouviu", "Ordena las palabras de la frase que escuchaste"),
     ("Type what you heard", "Digite o que você ouviu", "Escribe lo que escuchaste"),
     ("Do you remember this card?", "Você se lembra deste cartão?", "¿Recuerdas esta tarjeta?"),
@@ -2673,7 +2703,7 @@ fn maps() -> &'static Maps {
     static M: OnceLock<Maps> = OnceLock::new();
     M.get_or_init(|| {
         let mut m = Maps { forward: [HashMap::new(), HashMap::new()], back: HashMap::new() };
-        for (en, pt, es) in TABLE.iter().copied() {
+        for (en, pt, es) in TABLE.iter().chain(crate::jlab::I18N.iter()).copied() {
             m.forward[0].entry(en).or_insert(pt);
             m.forward[1].entry(en).or_insert(es);
             if pt != en {

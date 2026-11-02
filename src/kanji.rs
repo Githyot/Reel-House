@@ -35,6 +35,11 @@ fn table() -> &'static HashMap<char, Kanji> {
     })
 }
 
+/// Every kanji of the table.
+pub fn all() -> impl Iterator<Item = (char, &'static Kanji)> {
+    table().iter().map(|(c, k)| (*c, k))
+}
+
 pub fn info(c: char) -> Option<&'static Kanji> {
     table().get(&c)
 }

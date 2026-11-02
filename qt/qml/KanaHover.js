@@ -53,7 +53,9 @@ function romaji(s) {
 }
 
 // what the card knows: "word 【reading】", "<b>word</b>: meaning", "<b>字</b> — meaning; 音 オン; 訓 くん"
-function dict(html) {
+// `extra` is the card's own list from the core ({words: [[word, reading]], kanji: [[字, "meaning; 音 …; 訓 …"]]}):
+// the furigana of its fields (日本[にほん], <ruby>), a Word / Word Reading pair, and the kanji table of the app
+function dict(html, extra) {
     const d = { reading: {}, meaning: {}, kanji: {} }
     const s = html || ""
     let m
@@ -63,6 +65,10 @@ function dict(html) {
     while ((m = mr.exec(s)) !== null) if (!d.meaning[m[1]]) d.meaning[m[1]] = m[2].trim()
     const kr = /<b>(.)<\/b>\s*—\s*([^<]*)/g
     while ((m = kr.exec(s)) !== null) d.kanji[m[1]] = m[2].trim()
+    if (extra) {
+        for (const p of (extra.words || [])) if (p.length > 1 && !d.reading[p[0]]) d.reading[p[0]] = toHira(p[1])
+        for (const p of (extra.kanji || [])) if (p.length > 1 && !d.kanji[p[0]]) d.kanji[p[0]] = p[1]
+    }
     return d
 }
 

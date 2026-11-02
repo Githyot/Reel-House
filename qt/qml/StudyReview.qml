@@ -19,6 +19,9 @@ Item {
     property color cLearn: Theme.c.error
     property color cDue: Theme.c.success
     property color cHard: Theme.c.warning
+    // the trash of Study (StudyPage opens it)
+    property int trashCount: 0
+    signal openTrash()
     readonly property var card: session && session.card ? session.card : null
     readonly property bool shown: session !== null && session.showAnswer === true
     readonly property real cardId: card ? card.id : 0
@@ -102,8 +105,8 @@ Item {
     function playClip() { if (!card || !card.clip) return; clipOn = true; Core.cmd({cmd: "study_play_clip", name: card.clip}) }
     function toggleClip() { if (!clipOn || clipSt.ended === true) playClip(); else Core.cmd({cmd: "study_clip_pause"}) }
     Timer { interval: 250; repeat: true; running: rv.clipOn && rv.pageVisible; onTriggered: rv.clipSt = Core.state("study_clip") }
-    onShownChanged: { kanaLink = ""; if (shown && hrAt >= 0) backIn.restart(); else if (shown) frontIn.restart() }
-    onCardIdChanged: { kanaLink = ""; clipOn = false; clipSt = ({}); Core.cmd({cmd: "study_stop_clip"}); if (card) frontIn.restart(); textFl.contentY = 0 }
+    onShownChanged: { kanaLink = ""; kanaPinned = false; if (shown && hrAt >= 0) backIn.restart(); else if (shown) frontIn.restart() }
+    onCardIdChanged: { kanaLink = ""; kanaPinned = false; clipOn = false; clipSt = ({}); Core.cmd({cmd: "study_stop_clip"}); if (card) frontIn.restart(); textFl.contentY = 0 }
 
     // ---- sounds: they play by themselves when a side shows (Anki autoplay); R plays them again ----
     property string playedKey: ""
@@ -114,28 +117,37 @@ Item {
         if (!force && key === rv.playedKey) return
         rv.playedKey = key
         const list = rv.shown ? (c.aSounds || []) : (c.qSounds || [])
-        if (list.length > 0 || force) Core.cmd({cmd: "study_play_sounds", names: rv.shown && force ? (c.qSounds || []).concat(c.aSounds || []) : list})
+        if (list.length > 0 || force) Core.cmd({cmd: "study_play_sounds", names: rv.shown && force ? (c.qSounds || []).concat(c.aSounds || []) : list, manual: force === true})
         else Core.cmd({cmd: "study_stop_sounds"})
     }
     function openLink(l) {
         if (l.indexOf("jp:") === 0) return   // a word of the kana reader: it only shows its reading on hover
-        if (l.indexOf("sound:") === 0) { Core.cmd({cmd: "study_play_sounds", names: [decodeURIComponent(l.substring(6))]}); return }
+        if (l.indexOf("sound:") === 0) { Core.cmd({cmd: "study_play_sounds", names: [decodeURIComponent(l.substring(6))], manual: true}); return }
         // a clip of the Editor: played in mpv, not in the system player
         if (/\.(mp4|webm|mkv|mov|m4v)$/i.test(l)) { rv.clipOn = true; Core.cmd({cmd: "study_play_clip", name: decodeURIComponent(l.split("/").pop())}); return }
         Qt.openUrlExternally(l)
     }
     Connections { target: Core; function onStudyChanged() { if (rv.pageVisible) rv.playSide(false) } }
     onSessionChanged: if (session === null) playSide(false)
+    readonly property bool isJlab: card !== null && card !== undefined && card.jlab !== undefined && card.jlab !== null
     readonly property bool hasSound: card !== null && ((card.qSounds || []).length + (card.aSounds || []).length) > 0
     readonly property bool hasClip: card !== null && !!card.clip
     // ---- the hiragana / katakana reader: hovering a Japanese word of the card shows its kana and romaji (KanaHover.js) ----
-    readonly property var kanaDict: card ? Kana.dict((card.a || "") + (card.q || "")) : ({})
+    readonly property var kanaDict: card ? Kana.dict((card.a || "") + (card.q || ""), card.readings) : ({})
     property string kanaLink: ""
     property Item kanaFrom: null
     property point kanaAt: Qt.point(0, 0)
+    // on a touch screen there is no hover: a tap on the word keeps its box open until the next tap
+    property bool kanaPinned: false
     function kanaHover(item, link, pos) {
+        if (kanaPinned) return
         if (link.indexOf("jp:") !== 0) { if (kanaFrom === item) kanaLink = ""; return }
         kanaFrom = item; kanaLink = link; kanaAt = item.mapToItem(rv, pos.x, pos.y)
+    }
+    function kanaTap(item, pos) {
+        const link = item.linkAt(pos.x, pos.y)
+        if (link.indexOf("jp:") !== 0 || (kanaPinned && link === kanaLink && kanaFrom === item)) { kanaPinned = false; kanaLink = ""; return }
+        kanaFrom = item; kanaLink = link; kanaAt = item.mapToItem(rv, pos.x, pos.y); kanaPinned = true
     }
 
     readonly property int total: session ? (session.done || 0) + (session.new || 0) + (session.learn || 0) + (session.review || 0) : 0
@@ -375,13 +387,13 @@ Item {
     Item {
         id: stage
         visible: rv.card !== null
-        anchors { left: parent.left; right: parent.right; top: bar.bottom; topMargin: 16; bottom: bottomBar.top; bottomMargin: 16 }
+        anchors { left: parent.left; right: parent.right; top: bar.bottom; topMargin: 16; bottom: keyStrip.visible ? keyStrip.top : bottomBar.top; bottomMargin: 16 }
 
         StudySurface {
             id: face
             raised: true
             width: rv.cardW
-            height: Math.min(stage.height, Math.max(Math.min(stage.height, 260), col.implicitHeight + pad * 2))
+            height: Math.min(stage.height, Math.max(Math.min(stage.height, 260), col.implicitHeight + pad * 2 + (rv.hasSound ? 40 : 0)))
             readonly property real pad: rv.narrow ? 22 : 36
             anchors.centerIn: parent
             // no animation of the height: the card is a glass / shadow layer, and a layer that changes size every frame
@@ -405,6 +417,8 @@ Item {
                 id: textFl
                 anchors.fill: parent
                 anchors.margins: face.pad
+                // room for the "Play all audio" button pinned under the text
+                anchors.bottomMargin: rv.hasSound ? face.pad + 40 : face.pad
                 contentWidth: width
                 contentHeight: Math.max(height, col.implicitHeight)
                 clip: true
@@ -462,14 +476,26 @@ Item {
                             }
                         }
                     }
+                    // a card of a deck in Jlab mode: the sentence as word tiles (JlabCard.qml)
+                    JlabCard {
+                        visible: rv.isJlab
+                        width: parent.width
+                        height: visible ? implicitHeight : 0
+                        jlab: rv.isJlab ? rv.card.jlab : ({})
+                        shown: rv.shown
+                        narrow: rv.narrow
+                        onSettings: jlabSet.openFor(rv.session ? rv.session.id : 0, rv.session ? rv.session.name : "")
+                    }
                     Text {
                         id: frontText
+                        visible: !rv.isJlab
                         width: parent.width
                         horizontalAlignment: Text.AlignHCenter
                         wrapMode: Text.Wrap
                         textFormat: Text.RichText
                         text: Kana.linkify(rv.frontHtml, "" + Theme.c.text, rv.kanaDict)
                         onLinkHovered: function(l) { rv.kanaHover(frontText, l, frontHov.point.position) }
+                        TapHandler { onTapped: function(ev) { rv.kanaTap(frontText, ev.position) } }
                         HoverHandler { id: frontHov; cursorShape: frontText.hoveredLink.indexOf("jp:") === 0 ? Qt.WhatsThisCursor : Qt.ArrowCursor }
                         color: Theme.c.text
                         linkColor: Theme.c.accentText
@@ -481,7 +507,7 @@ Item {
                     }
                     Item {
                         id: answerPart
-                        visible: rv.shown && rv.backHtml !== ""
+                        visible: rv.shown && rv.backHtml !== "" && !rv.isJlab
                         width: parent.width
                         height: visible ? backText.implicitHeight + 30 : 0
                         Rectangle {
@@ -499,6 +525,7 @@ Item {
                             textFormat: Text.RichText
                             text: Kana.linkify(rv.backHtml, "" + Theme.c.text, rv.kanaDict)
                             onLinkHovered: function(l) { rv.kanaHover(backText, l, backHov.point.position) }
+                            TapHandler { onTapped: function(ev) { rv.kanaTap(backText, ev.position) } }
                             HoverHandler { id: backHov; cursorShape: backText.hoveredLink.indexOf("jp:") === 0 ? Qt.WhatsThisCursor : Qt.ArrowCursor }
                             color: Theme.c.text
                             linkColor: Theme.c.accentText
@@ -513,23 +540,19 @@ Item {
                             NumberAnimation { target: backText; property: "y"; from: 42; to: 30; duration: Theme.motion.slow; easing.type: Easing.OutCubic }
                         }
                     }
-                    // the media of the card, tidy under it: sound again, the video clip
-                    Item {
-                        visible: rv.hasSound
-                        width: parent.width; height: visible ? 56 : 0
-                        Row {
-                            anchors { horizontalCenter: parent.horizontalCenter; bottom: parent.bottom }
-                            spacing: 8
-                            FlatButton {
-                                visible: rv.hasSound
-                                kind: "plain"; pill: true; glyph: "audio"; iconSize: 16; implicitHeight: 34
-                                text: rv.narrow ? "" : rv.tr("Replay")
-                                ToolTip.visible: hovered; ToolTip.delay: 500; ToolTip.text: rv.tr("Play the sound again") + " (R)"
-                                onClicked: rv.playSide(true)
-                            }
-                        }
-                    }
                 }
+            }
+            // "Play all audio": pinned to the bottom of the card, outside the text that scrolls, so a big picture
+            // on the card can no longer push it out of sight (HP). It plays every sound of the side on screen.
+            FlatButton {
+                id: replayBtn
+                visible: rv.hasSound
+                z: 2
+                anchors { horizontalCenter: parent.horizontalCenter; bottom: parent.bottom; bottomMargin: 10 }
+                kind: "plain"; pill: true; glyph: "audio"; iconSize: 16; implicitHeight: 34
+                text: rv.tr("Play all audio")
+                ToolTip.visible: hovered; ToolTip.delay: 500; ToolTip.text: rv.tr("Play the sound again") + " (R)"
+                onClicked: rv.playSide(true)
             }
         }
     }
@@ -638,6 +661,117 @@ Item {
                     padButton: rv.padOn ? rv.gradeButtons[index] : ""
                     onActivated: rv.answer(index + 1)
                 }
+            }
+        }
+    }
+
+
+    // ================= the shortcuts, always in sight (HP): clickable, with their keys =================
+    // A list at the right of the card when there is room, else a strip that scrolls sideways above the answer
+    // buttons. Text only (no Shape icons, which do not draw on every machine), so it reads as a reminder of the keys
+    // and works with a finger on a touch screen.
+    readonly property var keyActs: [
+        {t: "Show answer", key: "Space", k: "reveal", on: card !== null && !shown},
+        {t: "Play all audio", key: "R", k: "replay", on: hasSound},
+        {t: "Undo", key: "Ctrl+Z", k: "undo", on: session !== null && session.canUndo === true},
+        {t: "Edit this card", key: "E", k: "edit", on: card !== null},
+        {t: "Suspend card", key: "@  !", k: "suspend", on: card !== null},
+        {t: "Bury card", key: "-", k: "bury", on: card !== null},
+        {t: "Mark note", key: "*", k: "mark", on: card !== null},
+        {t: "Delete card", key: "Ctrl+Del", k: "delete", on: card !== null, danger: true},
+        {t: "More", key: "", k: "more", on: card !== null},
+        {t: "Trash", key: "", k: "trash", on: true, n: trashCount},
+        {t: "Back to the decks", key: "Esc", k: "back", on: true}
+    ]
+    function keyAct(k) {
+        if (k === "reveal") reveal()
+        else if (k === "replay") playSide(true)
+        else if (k === "undo") Core.cmd({cmd: "study_undo"})
+        else if (k === "edit") editPop.open()
+        else if (k === "more") moreMenu.openBelow(sideKeys.visible ? sideKeys : keyStrip, true)
+        else if (k === "trash") rv.openTrash()
+        else if (k === "back") Core.cmd({cmd: "study_close"})
+        else Core.cmd({cmd: "study_card", what: k})
+    }
+    readonly property real sideRoom: (width - cardW) / 2
+    component KeyRow: Rectangle {
+        id: kr
+        property var a: ({})
+        property bool compact: false
+        readonly property bool live: a.on === true
+        readonly property color tone: a.danger === true ? Theme.c.error : Theme.c.text
+        implicitWidth: compact ? krRow.implicitWidth + 24 : 220
+        implicitHeight: compact ? 36 : 38
+        radius: compact ? height / 2 : Theme.shape.control
+        color: kra.pressed ? Theme.c.selected : (kra.containsMouse ? Theme.c.hover : (compact ? Theme.c.fill3 : "transparent"))
+        opacity: live ? 1 : 0.4
+        Row {
+            id: krRow
+            visible: kr.compact
+            anchors.centerIn: parent
+            spacing: 8
+            Text { anchors.verticalCenter: parent.verticalCenter; text: rv.tr(kr.a.t) + (kr.a.n > 0 ? " (" + kr.a.n + ")" : ""); color: kr.tone; font.pixelSize: 13; font.weight: Font.DemiBold; font.family: Theme.type.family }
+        }
+        Text {
+            visible: !kr.compact
+            anchors { left: parent.left; leftMargin: 10; right: keyCap.left; rightMargin: 8; verticalCenter: parent.verticalCenter }
+            elide: Text.ElideRight
+            text: rv.tr(kr.a.t) + (kr.a.n > 0 ? " (" + kr.a.n + ")" : "")
+            color: kr.tone; font.pixelSize: 14; font.family: Theme.type.family
+        }
+        Rectangle {
+            id: keyCap
+            visible: !kr.compact && kr.a.key !== undefined && kr.a.key !== ""
+            anchors { right: parent.right; rightMargin: 8; verticalCenter: parent.verticalCenter }
+            width: capTxt.implicitWidth + 12; height: 22; radius: 5
+            color: "transparent"
+            border.width: 1; border.color: Theme.c.border
+            Text { id: capTxt; anchors.centerIn: parent; text: kr.a.key || ""; color: Theme.c.textDim; font.pixelSize: 12; font.weight: Font.DemiBold; font.family: Theme.type.family }
+        }
+        MouseArea { id: kra; anchors.fill: parent; enabled: kr.live; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: rv.keyAct(kr.a.k) }
+    }
+    Rectangle {
+        id: sideKeys
+        visible: rv.card !== null && rv.sideRoom >= 252
+        z: 3
+        x: rv.width - rv.sideRoom + (rv.sideRoom - width) / 2
+        y: stage.y
+        width: 228
+        height: keyCol.implicitHeight + 16
+        radius: Theme.shape.card !== undefined ? Theme.shape.card : 12
+        color: Theme.c.card !== undefined ? Theme.c.card : Theme.c.fill3
+        border.width: 1; border.color: Theme.c.border
+        Column {
+            id: keyCol
+            x: 4; y: 8
+            width: parent.width - 8
+            spacing: 2
+            Text { leftPadding: 10; bottomPadding: 4; text: rv.tr("Shortcuts"); color: Theme.c.textDim; font.pixelSize: 12; font.weight: Font.Bold; font.family: Theme.type.family; font.capitalization: Font.AllUppercase }
+            Repeater {
+                model: rv.keyActs.length
+                delegate: KeyRow { required property int index; a: rv.keyActs[index]; width: keyCol.width }
+            }
+            Text { leftPadding: 10; topPadding: 6; width: keyCol.width; wrapMode: Text.Wrap; text: rv.tr("Answer: 1 Again · 2 Hard · 3 Good · 4 Easy"); color: Theme.c.textDim; font.pixelSize: 12; font.family: Theme.type.family }
+        }
+    }
+    Flickable {
+        id: keyStrip
+        visible: rv.card !== null && !sideKeys.visible
+        z: 3
+        anchors { left: parent.left; right: parent.right; bottom: bottomBar.top; bottomMargin: 10; leftMargin: 12; rightMargin: 12 }
+        height: 36
+        contentWidth: stripRow.implicitWidth
+        contentHeight: height
+        flickableDirection: Flickable.HorizontalFlick
+        boundsBehavior: Flickable.StopAtBounds
+        clip: true
+        Row {
+            id: stripRow
+            spacing: 6
+            Repeater {
+                // the strip leaves out "Show answer" and "Back": the big button and the header have them
+                model: rv.keyActs.filter(function(a) { return a.on && a.k !== "reveal" && a.k !== "back" })
+                delegate: KeyRow { required property var modelData; a: modelData; compact: true }
             }
         }
     }
@@ -751,7 +885,8 @@ Item {
             {t: "Suspend card", k: "suspend", key: "@"}, {t: "Suspend note", k: "suspend_note", key: ""},
             {t: "Bury card", k: "bury", key: "-"}, {t: "Bury note", k: "bury_note", key: ""},
             {t: "Mark note", k: "mark", key: "*"}, {t: "Reset to new", k: "reset", key: ""},
-            {t: "Due today", k: "set_due", arg: 0, key: ""}, {t: "Due tomorrow", k: "set_due", arg: 1, key: ""}
+            {t: "Due today", k: "set_due", arg: 0, key: ""}, {t: "Due tomorrow", k: "set_due", arg: 1, key: ""},
+            {t: "Delete card", k: "delete", key: "Ctrl+Del"}
         ]
         contentItem: Column {
             width: 280
@@ -892,7 +1027,9 @@ Item {
     Shortcut { sequence: "Ctrl+Z"; enabled: rv.keysOn; onActivated: Core.cmd({cmd: "study_undo"}) }
     Shortcut { sequences: ["R", "F5"]; enabled: rv.keysOn && rv.card !== null; onActivated: rv.playSide(true) }
     Shortcut { sequence: "E"; enabled: rv.keysOn && rv.card !== null; onActivated: editPop.open() }
-    Shortcut { sequence: "@"; enabled: rv.keysOn && rv.card !== null; onActivated: Core.cmd({cmd: "study_card", what: "suspend"}) }
+    Shortcut { sequences: ["@", "!"]; enabled: rv.keysOn && rv.card !== null; onActivated: Core.cmd({cmd: "study_card", what: "suspend"}) }
+    // Anki's key for deleting the note; it goes to the trash, so no question first
+    Shortcut { sequence: "Ctrl+Delete"; enabled: rv.keysOn && rv.card !== null; onActivated: Core.cmd({cmd: "study_card", what: "delete"}) }
     Shortcut { sequence: "-"; enabled: rv.keysOn && rv.card !== null; onActivated: Core.cmd({cmd: "study_card", what: "bury"}) }
     Shortcut { sequence: "*"; enabled: rv.keysOn && rv.card !== null; onActivated: Core.cmd({cmd: "study_card", what: "mark"}) }
     Shortcut { sequence: "Escape"; enabled: rv.keysOn; onActivated: Core.cmd({cmd: "study_close"}) }
@@ -900,7 +1037,7 @@ Item {
     Rectangle {
         id: kanaTip
         z: 100
-        visible: rv.kanaLink !== "" && rv.kanaFrom !== null && rv.kanaFrom.hoveredLink === rv.kanaLink
+        visible: rv.kanaLink !== "" && rv.kanaFrom !== null && (rv.kanaPinned || rv.kanaFrom.hoveredLink === rv.kanaLink)
         readonly property real gap: 18
         width: Math.min(320, kanaTxt.implicitWidth + 24)
         height: kanaTxt.implicitHeight + 18
@@ -923,4 +1060,5 @@ Item {
             lineHeight: 1.1
         }
     }
+    JlabSettings { id: jlabSet }
 }
