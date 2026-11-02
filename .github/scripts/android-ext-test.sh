@@ -4,7 +4,7 @@
 set -u
 PKG_APP=org.reelhouse.app
 redact() { sed -E 's#https?://[^ "]+#<url>#g' | cut -c1-220; }
-fail() { echo "::error::$1"; adb logcat -d -s ReelHouseExt:V AndroidRuntime:E | redact | tail -60; exit 1; }
+fail() { echo "::error::$1"; adb shell pidof $PKG_APP; adb logcat -d -s ReelHouseExt:V AndroidRuntime:E ActivityTaskManager:I | redact | tail -60; exit 1; }
 
 adb install -r -g ReelHouse-android-x86_64.apk >/dev/null || fail "app install failed"
 adb logcat -c
@@ -13,6 +13,8 @@ port=""
 for i in $(seq 1 90); do
   port=$(adb logcat -d -s ReelHouseExt:I | grep -oE 'Extension host on 127\.0\.0\.1:[0-9]+' | tail -1 | grep -oE '[0-9]+$')
   [ -n "$port" ] && break
+  # launch again now and then: right after boot the launcher can drop the first start
+  [ $((i % 15)) = 0 ] && adb shell monkey -p $PKG_APP -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
   sleep 2
 done
 [ -n "$port" ] || fail "the extension host did not start"
