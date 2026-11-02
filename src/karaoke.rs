@@ -771,14 +771,22 @@ mod live_tests {
     #[ignore]
     fn live_seasons() {
         let http = crate::net::UreqHttp::new();
-        for (show, season) in [("Dandadan", 2u32), ("Pokemon", 6), ("Pokémon Advanced Generation", 1)] {
+        for (show, season) in [("Dandadan", 2u32), ("Pokemon", 6), ("Pokémon", 6)] {
             let q = if season > 1 { format!("{} season {}", show, season) } else { show.to_string() };
             let list = crate::anilist::search(&http, &q).unwrap();
-            let f = list.first().expect("AniList knows it");
+            for x in list.iter().take(5) {
+                println!("  anilist: mal {} {:?} {:?} {:?}", x.id, x.kind, x.year, x.names.iter().take(3).collect::<Vec<_>>());
+            }
+            let Some(f) = list.first() else { println!("{} S{}: AniList found nothing", show, season); continue };
             let mut names: Vec<String> = f.names.first().filter(|n| !n.is_empty()).cloned().into_iter().collect();
             names.push(show.to_string());
             names.extend(f.names.iter().skip(1).filter(|n| !n.is_empty()).cloned());
             let r = songs_for(&http, &[f.id], &names, f.year);
+            if let Ok(k) = search(&http, &names[0]) {
+                for x in k.iter().take(12) {
+                    println!("  kara: {} {:?} y{:?} mal{:?} {:?}", x.title, x.kind, x.year, x.mal, x.series);
+                }
+            }
             println!("{} S{}: AniList '{}' mal {} year {:?} -> {:?}", show, season, q, f.id, f.year, r.as_ref().map(|v| v.iter().map(|s| s.label.clone()).collect::<Vec<_>>()));
         }
     }
