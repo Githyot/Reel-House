@@ -296,6 +296,13 @@ jobs:
           h = m.mpv_create(); assert h, "mpv_create failed"
           assert m.mpv_initialize(ctypes.c_void_p(h)) == 0, "mpv_initialize failed"
           print("libmpv works")'
+          echo "QML modules: $(ls /opt/reelhouse/qml/QtQuick | tr '\n' ' ')"
+          # start the program without a screen and keep what Qt and QML complain about (a missing module or plugin
+          # leaves parts of the window empty, such as the icons drawn with QtQuick.Shapes)
+          dnf -y -q install mesa-dri-drivers mesa-libEGL fontconfig > /dev/null 2>&1
+          QT_QPA_PLATFORM=offscreen timeout 40 /opt/reelhouse/bin/reelhouse-qt > run.log 2>&1
+          echo "program output (warnings):"; grep -iE "not installed|is not a type|cannot|failed|error|warning|plugin" run.log | sort | uniq -c | sort -rn | cut -c1-220 | head -40
+          if grep -qiE "module \"[^\"]+\" is not installed" run.log; then echo "::error::a QML module is missing from the package"; exit 1; fi
           if [ -f /opt/reelhouse/bin/libcef.so ]; then
             echo "Chromium libraries missing on a bare Fedora (installed with the desktop):"
             ldd /opt/reelhouse/bin/libcef.so | grep "not found" || echo none
