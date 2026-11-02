@@ -964,8 +964,11 @@ Item {
         e.push({text: T("Load an audio track…"), key: "aload", chevron: true})
         // a dub from the episode's other torrents (only the addons the user added are read)
         e.push({text: T("Look for a dub in other torrents"), key: "autodub", checked: page.p.autoDub === true})
-        if (page.p.dubBusy) e.push({text: T("Opening another stream…") + (page.p.dubOpening ? " " + page.p.dubOpening : ""), key: "", note: true})
-        else if (page.p.dubAdding) e.push({text: T("Adding the tracks of another stream…"), key: "", note: true})
+        // with where it is (the torrent's peers / speed / downloaded, or the seconds mpv has been reading), so a slow
+        // stream reads as working
+        const prog = page.p.dubProgress ? "  ·  " + page.p.dubProgress : ""
+        if (page.p.dubBusy) e.push({text: T("Opening another stream…") + (page.p.dubOpening ? " " + page.p.dubOpening : "") + prog, key: "", note: true})
+        else if (page.p.dubAdding) e.push({text: T("Adding the tracks of another stream…") + prog, key: "", note: true})
         else if (page.p.dubNote) e.push({text: T(page.p.dubNote), key: "", note: true})
         // every audio language the other streams of the episode say they have: one click adds that stream's tracks
         const dc = page.arr(page.p.audioSources)
@@ -1072,7 +1075,7 @@ Item {
     Connections {
         target: Core
         function onPlayerChanged() {
-            const b = (page.p.audioSyncBusy === true) + "/" + (page.p.dubBusy === true) + "/" + (page.p.dubNote || "")
+            const b = (page.p.audioSyncBusy === true) + "/" + (page.p.dubBusy === true) + "/" + (page.p.dubNote || "") + "/" + (page.p.dubProgress || "") + "/" + (page.p.dubAdding === true)
             if (b === page.audioSyncWas) return
             page.audioSyncWas = b
             if (aMenu.visible) aMenu.entries = page.audioEntries()

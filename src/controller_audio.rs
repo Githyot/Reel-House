@@ -65,6 +65,8 @@ pub struct AudioSyncState {
     pub dub_manual_gen: u64,
     /// What is being opened (for the menu), and the tracks being added that mpv has not shown yet.
     pub dub_opening: String,
+    /// where opening / adding the other stream is ("Connecting to peers: 3 found · …", "12 s"), shown beside the note
+    pub dub_progress: String,
     pub dub_pending: Option<super::controller_dub::DubPending>,
     /// Links and stream indexes already added to this video (not offered again).
     pub extra_urls: Vec<String>,

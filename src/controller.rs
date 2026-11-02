@@ -345,6 +345,8 @@ pub enum Msg {
     SubSync(u64, bool, Result<crate::subsync::Match, String>),
     /// A dub found in another torrent of the episode (controller_dub): session token, its name, the stream opened.
     DubFound(u64, u64, String, String, Result<Resolved, String>),
+    /// how opening the other stream goes (token, gen, the engine's status line)
+    DubStatus(u64, u64, String),
     ForcedProgress(u8),
     BackupDone(Result<(String, usize, u64), String>, bool, u64),
     Restored(Result<usize, String>),
@@ -2553,6 +2555,12 @@ impl Core {
             Msg::AudioSync(t, p, r) => self.on_audio_sync(t, p, r),
             Msg::SubSync(t, a, r) => self.on_sub_sync(t, a, r),
             Msg::DubFound(t, g, l, lang, r) => self.on_dub_found(t, g, l, lang, r),
+            Msg::DubStatus(t, g, line) => {
+                if g == self.audio_sync.dub_gen && self.audio_sync.dub_busy && self.session.as_ref().map(|s| s.token == t).unwrap_or(false) {
+                    self.audio_sync.dub_progress = line;
+                    self.events.push(Event::Session);
+                }
+            }
             Msg::ForcedProgress(p) => {
                 if let Some(t) = self.translating.as_mut() {
                     t.pct = t.pct.max(p);
