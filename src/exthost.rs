@@ -134,7 +134,7 @@ fn parse_index(base: &str, j: &Json) -> Vec<Offered> {
             let warning = e.get("contentWarning").str();
             Some(Offered {
                 lang: lang_of_pkg(&pkg),
-                code: num(&e.get("versionCode")),
+                code: num(e.get("versionCode")),
                 nsfw: warning.ends_with("NSFW") || suwayomi::looks_adult(&name),
                 icon: e.get("resources").get("iconUrl").str(),
                 apk_url,
@@ -152,7 +152,7 @@ fn parse_index(base: &str, j: &Json) -> Vec<Offered> {
         let name = e.get("name").str().trim_start_matches("Tachiyomi: ").to_string();
         Some(Offered {
             lang: e.get("lang").str(),
-            code: num(&e.get("code")),
+            code: num(e.get("code")),
             nsfw: e.get("nsfw").as_i64().unwrap_or(0) == 1 || e.get("nsfw").as_bool().unwrap_or(false) || suwayomi::looks_adult(&name),
             icon: format!("{}icon/{}.png", base, pkg),
             apk_url: format!("{}apk/{}", base, apk),
