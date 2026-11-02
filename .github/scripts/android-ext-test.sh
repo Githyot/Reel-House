@@ -38,7 +38,7 @@ echo "install: ok, $(echo "$r" | jq '.sources | length') source(s), lib version 
 r=$(api '{"op":"installed"}'); check "$r" installed || fail installed
 echo "installed: $(echo "$r" | jq '.extensions | length') extension(s)"
 r=$(api '{"op":"sources"}'); check "$r" sources || fail sources
-src=$(echo "$r" | jq -r '.sources[0].id'); echo "sources: $(echo "$r" | jq '.sources | length')"
+src=$(echo "$r" | jq -r '([.sources[] | select(.lang == "en")] + .sources)[0].id'); echo "sources: $(echo "$r" | jq '.sources | length')"
 
 ok=1
 r=$(api "{\"op\":\"popular\",\"source\":\"$src\",\"page\":1}")
@@ -47,7 +47,10 @@ if check "$r" popular; then
   murl=$(echo "$r" | jq -r '.mangas[0].url'); thumb=$(echo "$r" | jq -r '.mangas[0].thumbnail')
 else ok=0; fi
 r=$(api "{\"op\":\"search\",\"source\":\"$src\",\"page\":1,\"query\":\"a\"}")
-check "$r" search && echo "search: $(echo "$r" | jq '.mangas | length') series" || ok=0
+if check "$r" search; then
+  echo "search: $(echo "$r" | jq '.mangas | length') series"
+  if [ -z "${murl:-}" ] || [ "$murl" = null ]; then murl=$(echo "$r" | jq -r '.mangas[0].url'); thumb=$(echo "$r" | jq -r '.mangas[0].thumbnail'); fi
+else ok=0; fi
 if [ -n "${murl:-}" ] && [ "$murl" != null ]; then
   q=$(jq -cn --arg s "$src" --arg u "$murl" '{op:"details",source:$s,url:$u}')
   r=$(api "$q"); check "$r" details && echo "details: ok, status $(echo "$r" | jq .status), description $(echo "$r" | jq -r .description | wc -c) chars" || ok=0
