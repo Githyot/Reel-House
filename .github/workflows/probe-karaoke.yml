@@ -1,0 +1,11 @@
+name: Probe karaoke live
+on:
+  push:
+    branches: [probe/karaoke-live]
+jobs:
+  live:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --lib --features devproxy karaoke::live_tests -- --ignored --nocapture
