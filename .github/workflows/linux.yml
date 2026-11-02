@@ -67,6 +67,26 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: bash fetch-assets.sh linux
+      # Research mode draws pages with Chromium (CEF, BSD licence): the "minimal" Linux build of the same CEF version
+      # as Windows (msys-build-qt.sh), checked against the SHA-1 the CEF build server lists. CMake then builds
+      # reelhouse-cef-helper and turns REELHOUSE_CEF on. Without it Research mode opens pages in the system browser.
+      - name: Chromium (CEF)
+        run: |
+          CEF_VERSION="154.0.34+g14c5a08+chromium-154.0.8037.98"
+          name="cef_binary_${CEF_VERSION}_linux64_minimal"
+          cef=qt/third_party/cef
+          if [ "$(cat $cef/VERSION.reelhouse 2>/dev/null)" = "$CEF_VERSION" ] && [ -f $cef/Release/libcef.so ]; then echo "cached"; exit 0; fi
+          set +e
+          sha=$(curl -fsSL --retry 3 https://cef-builds.spotifycdn.com/index.json | jq -r --arg v "$CEF_VERSION" --arg n "$name.tar.bz2" '.linux64.versions[] | select(.cef_version == $v) | .files[] | select(.name == $n) | .sha1')
+          url="https://cef-builds.spotifycdn.com/$(printf '%s' "$name" | sed 's/+/%2B/g').tar.bz2"
+          if [ -z "$sha" ] || ! curl -fsSL --retry 3 -o "$RUNNER_TEMP/cef.tar.bz2" "$url" || [ "$(sha1sum "$RUNNER_TEMP/cef.tar.bz2" | cut -d' ' -f1)" != "$sha" ]; then
+            echo "::warning::Chromium (CEF) could not be downloaded or its checksum is wrong: Research mode will open pages in the system browser"
+            exit 0
+          fi
+          rm -rf $cef && mkdir -p qt/third_party && tar -xjf "$RUNNER_TEMP/cef.tar.bz2" -C qt/third_party && mv "qt/third_party/$name" $cef
+          rm -rf $cef/libcef_dll $cef/cmake $cef/bazel
+          echo "$CEF_VERSION" > $cef/VERSION.reelhouse
+          du -sh $cef/Release $cef/Resources
       - name: Rust core
         run: |
           cargo --version
@@ -123,6 +143,31 @@ jobs:
           if [ -f "$tts" ] && [ ! -f AppDir/usr/plugins/texttospeech/libqtexttospeech_speechd.so ]; then
             mkdir -p AppDir/usr/plugins/texttospeech && cp -f "$tts" AppDir/usr/plugins/texttospeech/
             patchelf --set-rpath '$ORIGIN/../../lib' AppDir/usr/plugins/texttospeech/libqtexttospeech_speechd.so
+          fi
+          # Libraries every desktop system has are taken from it, not bundled: the player loads the system's libmpv,
+          # whose own dependencies (GLib, D-Bus, PulseAudio, systemd, compression…) need that system's versions. Copies
+          # from the build machine, older than Fedora's, were loaded first and broke it ("undefined symbol: g_dir_unref").
+          # nfpm.yaml lists them as dependencies instead. Qt, ICU, Qt's FFmpeg and the xcb helpers stay bundled.
+          for l in libglib-2.0 libgobject-2.0 libgio-2.0 libgmodule-2.0 libgthread-2.0 libffi libpcre libpcre2-8 \
+                   libdbus-1 libsystemd libselinux libmount libblkid libgcrypt libcap libapparmor \
+                   libpulse libpulsecommon libasyncns libsndfile libFLAC libogg libopus libvorbis libvorbisenc \
+                   libbz2 liblzma liblz4 libzstd libbrotlicommon libbrotlidec libpng16 \
+                   libgssapi_krb5 libkrb5 libk5crypto libkrb5support libkeyutils; do
+            rm -fv AppDir/usr/lib/$l.so* AppDir/usr/lib/$l-*.so 2>/dev/null | sed 's/^/unbundled: /'
+          done
+          # Research mode: Chromium's files go next to the program (libcef.so and the libraries it loads, its V8
+          # snapshot, the .pak resources, icudtl.dat and the locales of the app's languages), with the helper.
+          cef=qt/third_party/cef
+          if [ -f $cef/Release/libcef.so ] && [ -f build-linux/reelhouse-cef-helper ]; then
+            for f in $cef/Release/*.so $cef/Release/*.so.* $cef/Release/*.bin $cef/Release/*.json; do [ -f "$f" ] && cp -f "$f" AppDir/usr/bin/; done
+            cp -f $cef/Resources/*.pak $cef/Resources/icudtl.dat AppDir/usr/bin/
+            mkdir -p AppDir/usr/bin/locales
+            for l in en-US pt-BR pt-PT es es-419 ja; do cp -f $cef/Resources/locales/"$l"*.pak AppDir/usr/bin/locales/ 2>/dev/null || true; done
+            cp -f build-linux/reelhouse-cef-helper AppDir/usr/bin/
+            strip --strip-unneeded AppDir/usr/bin/libcef.so 2>/dev/null || true
+            echo "Chromium (CEF): $(du -h AppDir/usr/bin/libcef.so | cut -f1) libcef.so, $(ls AppDir/usr/bin/locales | wc -l) locale files"
+          else
+            echo "::warning::Chromium (CEF) or reelhouse-cef-helper missing: Research mode will open pages in the system browser"
           fi
           # the Learn course packs and the kana sounds go next to the program, the first place the core looks
           mkdir -p AppDir/usr/bin/learn AppDir/usr/bin/kana
@@ -227,3 +272,33 @@ jobs:
             **Linux (x86_64):** Ubuntu/Debian: baixe `ReelHouse-linux-x86_64.deb` e rode `sudo apt install ./ReelHouse-linux-x86_64.deb`;
             Fedora/openSUSE: baixe `ReelHouse-linux-x86_64.rpm` e rode `sudo dnf install ./ReelHouse-linux-x86_64.rpm`. Abra "ReelHouse" no menu
             ou rode `reelhouse`. O vídeo usa o libmpv do sistema (instalado junto como dependência; no Fedora vem do pacote `mpv-libs`).
+
+  # Installs the .rpm on a current Fedora and loads the system's libmpv the way the program does (its bundled
+  # libraries first), so a bundled library that clashes with the system's fails here, not on the user's machine.
+  fedora-check:
+    needs: linux
+    runs-on: ubuntu-latest
+    container: fedora:latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ReelHouse-linux-x86_64
+      - name: Install and load
+        run: |
+          dnf -y -q install ./ReelHouse-linux-x86_64.rpm python3 file > dnf.log 2>&1 || { tail -40 dnf.log; exit 1; }
+          rpm -q mpv-libs reelhouse
+          echo "missing libraries:"; ldd /opt/reelhouse/bin/reelhouse-qt | grep "not found" && exit 1 || echo none
+          LD_BIND_NOW=1 LD_LIBRARY_PATH=/opt/reelhouse/lib python3 -c 'import ctypes
+          for l in ["libQt6Core.so.6", "libQt6Gui.so.6", "libmpv.so.2"]:
+              ctypes.CDLL(l, mode=ctypes.RTLD_GLOBAL)
+              print("loaded", l)
+          m = ctypes.CDLL("libmpv.so.2"); m.mpv_create.restype = ctypes.c_void_p
+          h = m.mpv_create(); assert h, "mpv_create failed"
+          assert m.mpv_initialize(ctypes.c_void_p(h)) == 0, "mpv_initialize failed"
+          print("libmpv works")'
+          if [ -f /opt/reelhouse/bin/libcef.so ]; then
+            echo "Chromium libraries missing on a bare Fedora (installed with the desktop):"
+            ldd /opt/reelhouse/bin/libcef.so | grep "not found" || echo none
+          else
+            echo "::warning::no libcef.so in the package"
+          fi
