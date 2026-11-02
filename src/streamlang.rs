@@ -121,6 +121,11 @@ fn is_sub(w: Option<&String>) -> bool {
     w.is_some_and(|w| SUB_WORDS.contains(&w.as_str()))
 }
 
+/// Whether a stream's name says it carries subtitles ("MultiSub", "Legendado", "ESub"…).
+pub fn says_subs(text: &str) -> bool {
+    text.to_lowercase().split(|c: char| !c.is_alphanumeric()).any(|w| SUB_WORDS.contains(&w))
+}
+
 /// Reads the audio languages of a stream from its name, description and file name (any text, any case).
 pub fn audio_langs(text: &str) -> AudioLangs {
     let mut out = AudioLangs::default();

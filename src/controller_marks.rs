@@ -83,6 +83,7 @@ impl Core {
             if watched {
                 self.watched.insert(id.clone());
                 self.ext_off.remove(&id);
+                self.forget_position(|p| p.video_id == id);
                 if let Some(i) = self.progress.iter().position(|p| p.video_id == id) {
                     self.progress.remove(i);
                     progress_changed = true;

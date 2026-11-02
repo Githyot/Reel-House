@@ -64,6 +64,7 @@ impl Core {
             // The series is identified through AniList (fast and reachable) unless the title already carries its id.
             let mut ids: Vec<u64> = mal_direct.into_iter().collect();
             let mut names: Vec<String> = Vec::new();
+            let mut year: Option<i64> = None;
             let note: String;
             if ids.is_empty() {
                 let q = match season {
@@ -71,10 +72,16 @@ impl Core {
                     _ => show.clone(),
                 };
                 match anilist::search(&*http, &q) {
-                    Ok(list) => match list.first() {
+                    // an episode of a series: a film or music video of the same name is never its songs (AniList answers
+                    // "Pokemon season 6" with a Pokémon film)
+                    Ok(list) => match list.iter().find(|f| karaoke::series_kind(&f.kind)) {
                         Some(f) => {
                             ids.push(f.id);
-                            names.extend(f.names.iter().filter(|n| !n.is_empty()).cloned());
+                            year = f.year;
+                            // The romaji name first (the site names series by it), then the name of the file, then the rest.
+                            names.extend(f.names.first().filter(|n| !n.is_empty()).cloned());
+                            names.push(show.clone());
+                            names.extend(f.names.iter().skip(1).filter(|n| !n.is_empty()).cloned());
                             note = format!("{} (MyAnimeList {})", f.names.first().cloned().unwrap_or_default(), f.id);
                         }
                         None => note = "AniList does not know this title".to_string(),
@@ -84,10 +91,13 @@ impl Core {
             } else {
                 note = format!("MyAnimeList {}", ids[0]);
             }
-            names.push(show.clone());
-            // The site names series by their romaji title: the first name of AniList is that one.
-            let r = karaoke::songs_for(&*http, &ids, &names);
-            crate::debug::log("karaoke", &format!("ids {:?}, names {:?}; result: {}", ids, names, match &r {
+            if !names.contains(&show) {
+                names.push(show.clone());
+            }
+            // The site names series by their romaji title (the first name of AniList) and keeps every season under the
+            // name of the series, often with the id of the first season: find() also tries the names without the season.
+            let r = karaoke::songs_for(&*http, &ids, &names, year);
+            crate::debug::log("karaoke", &format!("ids {:?}, year {:?}, names {:?}; result: {}", ids, year, names, match &r {
                 Ok(v) => format!("{} song(s): {}", v.len(), v.iter().map(|x| format!("{} ({:.0}s)", x.label, x.duration)).collect::<Vec<_>>().join("; ")),
                 Err(e) => format!("error: {}", e),
             }));

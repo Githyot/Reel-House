@@ -340,11 +340,24 @@ pub fn parse_size_mb(text: &str) -> u32 {
 /// Best first. Streams at or under `preferred` height come first (highest of those),
 /// then larger ones, then unknown. Ties go to score, seeders and direct links.
 pub fn rank(streams: &mut [Stream], preferred: u32) {
-    streams.sort_by_key(|s| {
+    // within a quality, a stream that can play (peers or a link) with the most languages (flags) comes first
+    // (HP, 2026-11-02: "dar sempre preferência para o torrent que tiver o maior número de bandeiras")
+    streams.sort_by_cached_key(|s| {
         let band: i64 = if s.res == 0 { 0 } else if s.res <= preferred { 2 } else { 1 };
         let res_key: i64 = if s.res == 0 || s.res <= preferred { s.res as i64 } else { -(s.res as i64) };
-        std::cmp::Reverse((band, res_key, !s.pack as i64, s.score as i64, s.seeders as i64, s.url.is_some() as i64))
+        let alive = (s.seeders > 0 || s.url.is_some() || s.local.is_some()) as i64;
+        std::cmp::Reverse((band, res_key, !s.pack as i64, alive, lang_count(s) as i64, s.score as i64, s.seeders as i64, s.url.is_some() as i64))
     });
+}
+
+/// How many languages (flags) a stream's name says it carries; "Dual"/"Multi" alone counts as two.
+pub fn lang_count(s: &Stream) -> usize {
+    let a = crate::streamlang::audio_langs(&format!("{} {} {}", s.name, s.desc, s.filename.as_deref().unwrap_or("")));
+    if a.multi {
+        a.langs.len().max(2)
+    } else {
+        a.langs.len()
+    }
 }
 
 /// The key that names one stream: its info hash, else its link.
@@ -534,6 +547,22 @@ mod tests {
         rank(&mut v, 1080);
         let order: Vec<_> = v.iter().map(|x| x.info_hash.clone().unwrap()).collect();
         assert_eq!(order, vec!["d", "c", "b", "a", "e"]);
+    }
+
+    #[test]
+    fn most_languages_first_within_a_quality() {
+        let mut v = vec![
+            s("1080p", "Show S02E05 \u{1F464} 240 \u{1F1F7}\u{1F1FA} \u{1F1FA}\u{1F1F8}", Some("two")),
+            s("1080p", "Show S02E05 \u{1F464} 300", Some("none")),
+            s("1080p", "Show S02E05 \u{1F464} 114 \u{1F1EC}\u{1F1E7} \u{1F1F7}\u{1F1FA} \u{1F1EE}\u{1F1F9} \u{1F1F5}\u{1F1F9}", Some("four")),
+            s("1080p", "Show S02E05 DUAL", Some("dead")),
+        ];
+        for x in v.iter_mut() {
+            x.seeders = if x.info_hash.as_deref() == Some("dead") { 0 } else { 5 };
+        }
+        rank(&mut v, 1080);
+        let order: Vec<_> = v.iter().map(|x| x.info_hash.clone().unwrap()).collect();
+        assert_eq!(order, vec!["four", "two", "none", "dead"]);
     }
 
     #[test]

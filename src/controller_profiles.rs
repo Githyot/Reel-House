@@ -126,6 +126,8 @@ impl Core {
         self.favorites = settings::load_list(&d, "favorites.json");
         self.watched = load_watched(&d);
         self.progress = load_progress(&d);
+        self.ep_resume = controller_resume::load_resume(&d);
+        self.track_restore = None;
         self.manga = crate::manga::State::load(&d);
         self.events.push(Event::MangaLibrary);
         self.novels = crate::manga::State::load_file(&d, controller_novels::SHELF);

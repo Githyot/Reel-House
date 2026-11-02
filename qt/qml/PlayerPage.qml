@@ -963,13 +963,14 @@ Item {
         e.push({text: T("Load an audio track…"), key: "aload", chevron: true})
         // a dub from the episode's other torrents (only the addons the user added are read)
         e.push({text: T("Look for a dub in other torrents"), key: "autodub", checked: page.p.autoDub === true})
-        if (page.p.dubBusy) e.push({text: T("Opening a torrent with a dub…"), key: ""})
+        if (page.p.dubBusy) e.push({text: T("Opening another stream…") + (page.p.dubOpening ? " " + page.p.dubOpening : ""), key: "", note: true})
+        else if (page.p.dubAdding) e.push({text: T("Adding the tracks of another stream…"), key: "", note: true})
         else if (page.p.dubNote) e.push({text: T(page.p.dubNote), key: "", note: true})
-        // the other streams of the episode that say they carry a dub: one click adds its sound
-        const dc = page.arr(page.p.dubCands)
-        if (dc.length > 0 && !page.p.dubBusy) {
-            e.push({header: T("Dubs in other torrents")})
-            dc.forEach(function(x) { e.push({text: x.label, key: "dubtry", index: x.index}) })
+        // every audio language the other streams of the episode say they have: one click adds that stream's tracks
+        const dc = page.arr(page.p.audioSources)
+        if (dc.length > 0) {
+            e.push({header: T("Audio from other streams")})
+            dc.forEach(function(x) { e.push({text: x.label, key: "dubtry", index: x.index, lang: x.lang}) })
         }
         // a dub loaded from a file: its delay (+ = the sound comes later), the automatic sync, taking it out
         const ext = t.some(function(a) { return a.selected && a.external })
@@ -1027,7 +1028,7 @@ Item {
         case "async": Core.cmd({cmd: "audio_sync"}); break
         case "aremove": Core.cmd({cmd: "audio_remove"}); break
         case "autodub": Core.cmd({cmd: "auto_dub", on: page.p.autoDub !== true}); break
-        case "dubtry": Core.cmd({cmd: "dub_try", index: en.index}); break
+        case "dubtry": Core.cmd({cmd: "dub_try", index: en.index, lang: en.lang || ""}); break
         case "sid": Core.cmd({cmd: "set_sub", id: en.id}); break
         case "cand": Core.cmd({cmd: "load_sub_cand", index: en.index}); break
         case "speed": Core.cmd({cmd: "speed", value: en.value}); break

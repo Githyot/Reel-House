@@ -27,6 +27,8 @@ pub struct Kara {
     pub series: Vec<String>,
     /// MyAnimeList ids of those series.
     pub mal: Vec<u64>,
+    /// Year of the song (the year the season it opens aired), when the site gives one.
+    pub year: Option<i64>,
 }
 
 /// A song with its lyrics, ready to be placed in an episode.
@@ -91,7 +93,7 @@ pub fn parse_search(j: &Json) -> Vec<Kara> {
                 }
             }
         }
-        out.push(Kara { kid, title: title_of(k), kind, order: k.get("songorder").as_f64().unwrap_or(0.0) as u32, duration: k.get("duration").as_f64().unwrap_or(0.0), lyrics, series, mal });
+        out.push(Kara { kid, title: title_of(k), kind, order: k.get("songorder").as_f64().unwrap_or(0.0) as u32, duration: k.get("duration").as_f64().unwrap_or(0.0), lyrics, series, mal, year: k.get("year").as_f64().map(|y| y as i64).filter(|y| *y > 1900) });
     }
     out
 }
@@ -107,28 +109,80 @@ fn norm(s: &str) -> String {
     s.to_lowercase().chars().filter(|c| c.is_alphanumeric()).collect()
 }
 
+/// Whether an AniList format is one of a series' (TV, short TV, web), not a film, special, OVA or music video.
+pub fn series_kind(format: &str) -> bool {
+    matches!(format, "TV" | "TV_SHORT" | "ONA" | "")
+}
+
+/// A name without its season part: "Dandadan 2nd Season", "DAN DA DAN Season 2", "Mob Psycho 100 II" or
+/// "ダンダダン 第2期" become the name of the series. The site keeps every season of a series under one name.
+pub fn base_name(n: &str) -> String {
+    let t = n.trim();
+    let mut words: Vec<&str> = t.split_whitespace().collect();
+    // "第2期" / "第二期" at the end
+    if let Some(last) = words.last() {
+        if last.starts_with('第') && last.ends_with('期') {
+            words.pop();
+        }
+    }
+    loop {
+        let n = words.len();
+        if n < 2 {
+            break;
+        }
+        let last = words[n - 1].trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase();
+        let prev = words[n - 2].trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase();
+        let ordinal = |w: &str| w.chars().next().is_some_and(|c| c.is_ascii_digit()) && (w.ends_with("st") || w.ends_with("nd") || w.ends_with("rd") || w.ends_with("th"));
+        let number = |w: &str| !w.is_empty() && (w.chars().all(|c| c.is_ascii_digit()) || matches!(w, "ii" | "iii" | "iv" | "v" | "vi"));
+        if (prev == "season" || prev == "part" || prev == "cour") && number(&last) && n >= 3 {
+            words.truncate(n - 2);
+        } else if last == "season" && (ordinal(&prev) || matches!(prev.as_str(), "second" | "third" | "fourth" | "final")) && n >= 3 {
+            words.truncate(n - 2);
+            if words.len() >= 2 && words[words.len() - 1].eq_ignore_ascii_case("the") {
+                words.pop();
+            }
+        } else if (last == "season" || last == "part") && n >= 2 {
+            words.truncate(n - 1);
+        } else if last == "ii" || (last.len() <= 2 && last.chars().all(|c| c.is_ascii_digit()) && n >= 2 && last != "0") {
+            // "Mob Psycho 100 II", "Kaguya-sama 2"; but never a name that is only a number ("86")
+            words.truncate(n - 1);
+        } else {
+            break;
+        }
+    }
+    words.join(" ").trim_end_matches(|c: char| c == ':' || c == '-' || c.is_whitespace()).to_string()
+}
+
 /// The openings and endings of a series. `mal` are the MyAnimeList ids that are good for this episode (the first one
-/// that has songs wins); `names` are the names to search for, best first. Without an id, a song counts when the name
-/// of its series is the name searched for.
-pub fn find(http: &dyn Http, mal: &[u64], names: &[String]) -> Result<Vec<Kara>, String> {
-    let mut seen: Vec<String> = Vec::new();
+/// that has songs wins); `names` are the names to search for, best first. When no song carries one of the ids (the site
+/// often files a later season under the id of the first one), a song counts when the name of its series is one of the
+/// names searched for (or one of them without its season part); then `year`, the year the season aired, keeps the
+/// songs of that season when the site knows their year.
+pub fn find(http: &dyn Http, mal: &[u64], names: &[String], year: Option<i64>) -> Result<Vec<Kara>, String> {
+    // The names to search: each one, then each one without its season part, without repeats.
+    let mut queries: Vec<String> = Vec::new();
+    let mut keys: Vec<String> = Vec::new();
+    for n in names.iter().map(|n| n.trim()).filter(|n| !n.is_empty()) {
+        for q in [n.to_string(), base_name(n)] {
+            let key = norm(&q);
+            if !key.is_empty() && !keys.contains(&key) {
+                keys.push(key);
+                queries.push(q);
+            }
+        }
+    }
     let mut last_err = None;
     let mut all: Vec<Kara> = Vec::new();
-    for n in names.iter().filter(|n| !n.trim().is_empty()).take(4) {
-        let key = norm(n);
-        if seen.contains(&key) {
-            continue;
-        }
-        seen.push(key.clone());
-        match search(http, n) {
+    let by_name = |all: &[Kara]| all.iter().any(|k| k.series.iter().any(|s| keys.contains(&norm(s))));
+    for q in queries.iter().take(6) {
+        match search(http, q) {
             Ok(v) => {
                 for k in v {
                     if !all.iter().any(|a| a.kid == k.kid) {
                         all.push(k);
                     }
                 }
-                let hit = if mal.is_empty() { all.iter().any(|k| k.series.iter().any(|s| norm(s) == key)) } else { mal.iter().any(|id| all.iter().any(|k| k.mal.contains(id))) };
-                if hit {
+                if mal.iter().any(|id| all.iter().any(|k| k.mal.contains(id))) || (mal.is_empty() && by_name(&all)) {
                     break;
                 }
             }
@@ -144,11 +198,15 @@ pub fn find(http: &dyn Http, mal: &[u64], names: &[String]) -> Result<Vec<Kara>,
             return Ok(v);
         }
     }
-    if mal.is_empty() {
-        let keys: Vec<String> = seen;
-        return Ok(all.into_iter().filter(|k| k.series.iter().any(|s| keys.contains(&norm(s)))).collect());
+    let v: Vec<Kara> = all.into_iter().filter(|k| k.series.iter().any(|s| keys.contains(&norm(s)))).collect();
+    if let Some(y) = year {
+        // A season that aired late in a year can have its songs dated the next one.
+        let of_season: Vec<Kara> = v.iter().filter(|k| k.year.is_some_and(|ky| ky == y || ky == y + 1)).cloned().collect();
+        if !of_season.is_empty() && of_season.len() < v.len() && v.iter().any(|k| k.year.is_some_and(|ky| ky < y)) {
+            return Ok(of_season);
+        }
     }
-    Ok(vec![])
+    Ok(v)
 }
 
 /// Downloads the lyrics (an ASS file) of one song.
@@ -172,8 +230,8 @@ pub fn fetch_ass(http: &dyn Http, k: &Kara) -> Result<String, String> {
 }
 
 /// Looks the songs up and downloads their lyrics (at most 10 of them).
-pub fn songs_for(http: &dyn Http, mal: &[u64], names: &[String]) -> Result<Vec<Song>, String> {
-    let mut karas = find(http, mal, names)?;
+pub fn songs_for(http: &dyn Http, mal: &[u64], names: &[String], year: Option<i64>) -> Result<Vec<Song>, String> {
+    let mut karas = find(http, mal, names, year)?;
     karas.sort_by_key(|k| (k.kind as u8, k.order));
     let mut out = Vec::new();
     let mut last_err = String::new();
@@ -592,7 +650,7 @@ mod tests {
     #[test]
     fn finds_by_mal_id_through_any_name_and_downloads_lyrics() {
         let h = Fake::new().route("GET https://kara.moe/api/karas/search?filter=Witch", 200, SEARCH).route("downloads/lyrics/", 200, ASS);
-        let songs = songs_for(&h, &[51553], &["Witch Hat Atelier".to_string()]).unwrap();
+        let songs = songs_for(&h, &[51553], &["Witch Hat Atelier".to_string()], None).unwrap();
         assert_eq!(songs.len(), 2);
         assert!(songs[0].label.starts_with("Karaoke OP - Kaze no Anthem"));
         assert!(songs[1].label.starts_with("Karaoke ED 1"));
@@ -602,12 +660,52 @@ mod tests {
     fn tries_the_next_name_and_never_takes_another_series() {
         let h = Fake::new().route("filter=Tongari", 200, SEARCH).route("filter=Witch", 200, r#"{"content":[]}"#);
         let names = vec!["Witch Hat Atelier".to_string(), "Tongari Bôshi no Atelier".to_string()];
-        assert_eq!(find(&h, &[51553], &names).unwrap().len(), 2);
-        // Another MyAnimeList id: nothing of this series is used.
-        assert!(find(&h, &[999], &names).unwrap().is_empty());
+        assert_eq!(find(&h, &[51553], &names, None).unwrap().len(), 2);
+        // Another MyAnimeList id: the songs count only when the series has one of the names searched for.
+        assert_eq!(find(&h, &[999], &names, None).unwrap().len(), 2);
+        let h2 = Fake::new().route("filter=Witch", 200, SEARCH);
+        assert!(find(&h2, &[999], &["Witch Hat Atelier".to_string()], None).unwrap().is_empty());
         // No id known: the series name has to be the one searched for.
-        assert_eq!(find(&h, &[], &["Tongari Bôshi no Atelier".to_string()]).unwrap().len(), 2);
-        assert!(find(&h, &[], &["Witch Hat Atelier".to_string()]).unwrap().is_empty());
+        assert_eq!(find(&h, &[], &["Tongari Bôshi no Atelier".to_string()], None).unwrap().len(), 2);
+        assert!(find(&h, &[], &["Witch Hat Atelier".to_string()], None).unwrap().is_empty());
+    }
+
+    // Like the site: every season of Dandadan under one series that carries the id of the first season.
+    const DANDADAN: &str = r#"{"content":[
+      {"kid":"d1","titles":{"qro":"Otonoke"},"titles_default_language":"qro","songtypes":[{"name":"OP"}],"songorder":1,"year":2024,"duration":90,
+       "lyrics_infos":[{"default":true,"filename":"otonoke.ass"}],"myanimelist_ids":["57334"],"series":[{"name":"Dandadan","external_database_ids":{"myanimelist":57334}}]},
+      {"kid":"d2","titles":{"qro":"Kakumei Dôchû"},"titles_default_language":"qro","songtypes":[{"name":"OP"}],"songorder":2,"year":2025,"duration":89,
+       "lyrics_infos":[{"default":true,"filename":"kakumei.ass"}],"myanimelist_ids":["57334"],"series":[{"name":"Dandadan","external_database_ids":{"myanimelist":57334}}]},
+      {"kid":"x1","titles":{"qro":"Other"},"songtypes":[{"name":"OP"}],"songorder":1,"year":2025,"duration":90,
+       "lyrics_infos":[{"filename":"o.ass"}],"myanimelist_ids":["1"],"series":[{"name":"Dandadan Fan Movie"}]}]}"#;
+
+    #[test]
+    fn a_later_season_is_found_under_the_series_name() {
+        // AniList gives the id and names of season 2; the site files the songs under "Dandadan" (id of season 1).
+        let h = Fake::new().route("filter=Dandadan&", 200, DANDADAN).route("karas/search", 200, r#"{"content":[]}"#);
+        let names = vec!["Dandadan 2nd Season".to_string(), "DAN DA DAN Season 2".to_string(), "Dandadan".to_string()];
+        let v = find(&h, &[60543], &names, Some(2025)).unwrap();
+        assert_eq!(v.iter().map(|k| k.kid.as_str()).collect::<Vec<_>>(), vec!["d2"]);
+        // Without the year both openings of the series are kept (the length picks one), never the other series.
+        let v = find(&h, &[60543], &names, None).unwrap();
+        assert_eq!(v.len(), 2);
+        // The name of the season alone is enough: its base name is searched too.
+        let v = find(&h, &[60543], &["Dandadan 2nd Season".to_string()], Some(2025)).unwrap();
+        assert_eq!(v.len(), 1);
+    }
+
+    #[test]
+    fn season_parts_come_off_the_name() {
+        assert_eq!(base_name("Dandadan 2nd Season"), "Dandadan");
+        assert_eq!(base_name("DAN DA DAN Season 2"), "DAN DA DAN");
+        assert_eq!(base_name("ダンダダン 第2期"), "ダンダダン");
+        assert_eq!(base_name("Mob Psycho 100 II"), "Mob Psycho 100");
+        assert_eq!(base_name("Re:Zero Season 2 Part 2"), "Re:Zero");
+        assert_eq!(base_name("Shingeki no Kyojin: The Final Season"), "Shingeki no Kyojin");
+        assert_eq!(base_name("86"), "86");
+        assert_eq!(base_name("Mob Psycho 100"), "Mob Psycho 100");
+        assert_eq!(base_name("Steins;Gate 0"), "Steins;Gate 0");
+        assert!(series_kind("TV") && series_kind("ONA") && !series_kind("MOVIE") && !series_kind("MUSIC") && !series_kind("OVA"));
     }
 
     #[test]
@@ -623,13 +721,13 @@ mod tests {
     #[test]
     fn missing_lyrics_is_an_error() {
         let h = Fake::new().route("karas/search", 200, SEARCH);
-        assert!(songs_for(&h, &[51553], &["x".to_string()]).is_err());
+        assert!(songs_for(&h, &[51553], &["x".to_string()], None).is_err());
     }
 
     #[test]
     fn a_server_error_is_reported() {
         let h = Fake::new().route("karas/search", 500, "oops");
-        assert!(find(&h, &[1], &["x".to_string()]).is_err());
+        assert!(find(&h, &[1], &["x".to_string()], None).is_err());
     }
 }
 
@@ -666,5 +764,36 @@ mod look_tests {
     #[test]
     fn strip_an_keeps_other_tags() {
         assert_eq!(strip_an("a{\\an7\\b1}b\\and"), "a{\\b1}b\\and");
+    }
+}
+
+#[cfg(test)]
+mod live_tests {
+    use super::*;
+
+    /// The karaoke lookup the player does (controller_karaoke), against the real AniList and kara.moe:
+    /// `cargo test --lib --features devproxy karaoke::live_tests -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn live_seasons() {
+        let http = crate::net::UreqHttp::new();
+        for (show, season) in [("Dandadan", 2u32), ("Pokemon", 6), ("Pokémon", 6)] {
+            let q = if season > 1 { format!("{} season {}", show, season) } else { show.to_string() };
+            let list = crate::anilist::search(&http, &q).unwrap();
+            for x in list.iter().take(5) {
+                println!("  anilist: mal {} {:?} {:?} {:?}", x.id, x.kind, x.year, x.names.iter().take(3).collect::<Vec<_>>());
+            }
+            let Some(f) = list.iter().find(|f| series_kind(&f.kind)) else { println!("{} S{}: AniList found nothing", show, season); continue };
+            let mut names: Vec<String> = f.names.first().filter(|n| !n.is_empty()).cloned().into_iter().collect();
+            names.push(show.to_string());
+            names.extend(f.names.iter().skip(1).filter(|n| !n.is_empty()).cloned());
+            let r = songs_for(&http, &[f.id], &names, f.year);
+            if let Ok(k) = search(&http, &names[0]) {
+                for x in k.iter().take(12) {
+                    println!("  kara: {} {:?} y{:?} mal{:?} {:?}", x.title, x.kind, x.year, x.mal, x.series);
+                }
+            }
+            println!("{} S{}: AniList '{}' mal {} year {:?} -> {:?}", show, season, q, f.id, f.year, r.as_ref().map(|v| v.iter().map(|s| s.label.clone()).collect::<Vec<_>>()));
+        }
     }
 }
