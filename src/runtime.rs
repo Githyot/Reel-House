@@ -23,7 +23,21 @@ fn extract(item: Option<(&str, &[u8])>, dir: &Path) -> Option<PathBuf> {
     }
     let part = dir.join(format!("{}.part", name));
     fs::write(&part, bytes).ok()?;
-    fs::rename(&part, &path).ok()?;
+    let path = match fs::rename(&part, &path) {
+        Ok(()) => path,
+        Err(_) => {
+            // an older copy that cannot be replaced (still loaded by another window, held by an antivirus): this
+            // version gets its own name next to it
+            let (stem, ext) = name.rsplit_once('.').map(|(a, b)| (a.to_string(), format!(".{}", b))).unwrap_or((name.to_string(), String::new()));
+            let own = dir.join(format!("{}-{}{}", stem, bytes.len(), ext));
+            if !fs::metadata(&own).map(|m| m.len() == bytes.len() as u64).unwrap_or(false) {
+                fs::rename(&part, &own).ok()?;
+            } else {
+                let _ = fs::remove_file(&part);
+            }
+            own
+        }
+    };
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

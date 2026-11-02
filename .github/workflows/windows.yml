@@ -78,6 +78,11 @@ jobs:
             --exclude='*.a' --exclude=meta_types --exclude=qmltypes . | tar xf - -C ../../dist/ReelHouse
           cd ../../dist
           cp ../LICENSE ReelHouse/
+          # the player library also beside the program: the one built into the exe is written to the data folder on
+          # first run, and when that fails (a locked older copy, antivirus) Windows still finds this one by name
+          cp ../assets/libmpv-2.dll ReelHouse/
+          # never publish a package that cannot play video
+          test -s ReelHouse/libmpv-2.dll || { echo "::error::libmpv-2.dll is missing from the package"; exit 1; }
           ls ReelHouse
           zip -qr ReelHouse-windows.zip ReelHouse
       - uses: actions/upload-artifact@v4
