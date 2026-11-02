@@ -1,0 +1,57 @@
+# Checks the Android extension host (docs/android-extensions.md) on an emulator: installs an APK built by
+# "Build Android", installs one extension from a repository given when the run starts, and asks the host for its
+# sources, a list, chapters, pages and one picture. Diagnostic only; nothing is released. Runs by hand.
+name: Android extension test
+on:
+  workflow_dispatch:
+    inputs:
+      build_run:
+        description: "Run id of a Build Android run whose x86_64 APK is tested"
+        required: true
+      repo:
+        description: "Address of an extension repository folder (the one holding index.min.json)"
+        required: true
+      pkg:
+        description: "Package of the extension to install from it"
+        required: true
+permissions:
+  actions: read
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Hide the inputs in the log
+        run: |
+          echo "::add-mask::${{ inputs.repo }}"
+          echo "::add-mask::${{ inputs.pkg }}"
+      - uses: actions/download-artifact@v4
+        with:
+          name: ReelHouse-android-x86_64
+          run-id: ${{ inputs.build_run }}
+          github-token: ${{ github.token }}
+      - name: Extension APK
+        env:
+          REPO: ${{ inputs.repo }}
+          PKG: ${{ inputs.pkg }}
+        run: |
+          base="${REPO%/}/"
+          apk=$(curl -fsSL "${base}index.min.json" | jq -r --arg p "$PKG" '.[] | select(.pkg == $p) | .apk')
+          test -n "$apk"
+          curl -fsSL -o ext.apk "${base}apk/${apk}"
+          ls -la ext.apk ReelHouse-android-x86_64.apk
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+      - name: Emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: bash .github/scripts/android-ext-test.sh
