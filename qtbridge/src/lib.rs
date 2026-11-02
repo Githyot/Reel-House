@@ -1444,6 +1444,7 @@ fn state_player(b: &Bridge, c: &Core) -> Json {
     o.push(("dubNote", s(&c.audio_sync.dub_note)));
     // dubs listed by the other streams of the episode, to pick by hand in the Audio menu
     o.push(("dubOpening", s(&c.audio_sync.dub_opening)));
+    o.push(("dubProgress", s(&c.audio_sync.dub_progress)));
     o.push(("dubAdding", Json::Bool(c.audio_sync.dub_pending.is_some())));
     o.push(("audioSources", Json::Arr(c.audio_sources().into_iter().map(|(i, l, t)| Json::obj(vec![("index", n(i as f64)), ("lang", s(&l)), ("label", s(&t))])).collect())));
     o.push(("subSources", Json::Arr(c.sub_sources().into_iter().map(|(i, t)| Json::obj(vec![("index", n(i as f64)), ("label", s(&t))])).collect())));

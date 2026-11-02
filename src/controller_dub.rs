@@ -327,6 +327,7 @@ impl Core {
         self.audio_sync.dub_busy = true;
         self.audio_sync.dub_pending = None;
         self.audio_sync.dub_note.clear();
+        self.audio_sync.dub_progress.clear();
         self.audio_sync.dub_opening = tries.first().map(dub_label).unwrap_or_default();
         self.audio_sync.extra_opened.push(index);
         if manual {
@@ -336,7 +337,11 @@ impl Core {
         crate::debug::log("player", &format!("dub: opening {:?}", tries.iter().map(dub_label).collect::<Vec<_>>()));
         self.spawn(move |tx, http| {
             let cancelled = || cancel.load(Ordering::SeqCst);
-            let status = |m: String| crate::debug::log("player", &format!("dub: {}", m));
+            // logged, and shown in the Audio menu so a slow torrent reads as working (HP: tapped again and again)
+            let status = |m: String| {
+                crate::debug::log("player", &format!("dub: {}", m));
+                send(tx, Msg::DubStatus(token, gen, m));
+            };
             let mut last = String::from("no stream");
             for stream in &tries {
                 if cancelled() {
@@ -377,6 +382,7 @@ impl Core {
         if gen == self.audio_sync.dub_gen {
             self.audio_sync.dub_busy = false;
             self.audio_sync.dub_opening.clear();
+            self.audio_sync.dub_progress.clear();
         }
         self.events.push(Event::Session);
         let res = match r {
@@ -425,6 +431,12 @@ impl Core {
         let of_file: Vec<&crate::mpv::Track> = audio.iter().filter(|t| t.external && controller_audio::same_file(&t.file, &p.url)).collect();
         let subs = m.tracks("sub").into_iter().filter(|t| t.external && controller_audio::same_file(&t.file, &p.url)).count();
         let waited = p.since.elapsed().as_secs();
+        // the seconds since mpv began reading the other stream, beside "Adding the tracks…"
+        let shown = if waited >= 2 { format!("{} s", waited) } else { String::new() };
+        if shown != self.audio_sync.dub_progress {
+            self.audio_sync.dub_progress = shown;
+            self.events.push(Event::Session);
+        }
         // no subtitles came with the sound (or no sound in 20 s): ask for them apart, once
         if subs == 0 && !p.subs_asked && (!of_file.is_empty() || waited >= 20) {
             let r = m.cmd(&["async", "sub-add", &p.url, "auto"]);
@@ -441,6 +453,7 @@ impl Core {
             return;
         }
         self.audio_sync.dub_pending = None;
+        self.audio_sync.dub_progress.clear();
         self.events.push(Event::Session);
         if of_file.is_empty() && subs == 0 {
             crate::debug::log("player", &format!("dub: no tracks came from '{}' in {} s", p.label, waited));
@@ -450,7 +463,14 @@ impl Core {
         let langs: Vec<String> = of_file.iter().map(|t| t.lang.clone()).collect();
         crate::debug::log("player", &format!("dub: '{}' brought {} audio tracks {:?} and {} subtitle tracks", p.label, of_file.len(), langs, subs));
         self.audio_sync.dub_note = "Tracks added from another stream.".into();
-        if of_file.is_empty() || p.lang.is_empty() {
+        if of_file.is_empty() {
+            return;
+        }
+        if p.lang.is_empty() {
+            // opened for its subtitles: its sound tracks would only crowd the Audio menu
+            for t in &of_file {
+                let _ = m.cmd(&["audio-remove", &t.id.to_string()]);
+            }
             return;
         }
         let own = audio.iter().find(|t| !t.external && t.selected).or_else(|| audio.iter().find(|t| !t.external)).map(|t| t.lang.clone()).unwrap_or_default();
@@ -459,6 +479,13 @@ impl Core {
         let rec = ExtAudio { active: false, file_aid: nth, remote: true, ..ExtAudio::new(&sid, &p.url) };
         self.ext_audio.tracks.push(rec.clone());
         let Some(id) = file_track_id(&m, &p.url, nth) else { return };
+        // only the language asked for stays: mpv adds every sound track of the file (HP: picked Portuguese, got 12)
+        for t in of_file.iter().filter(|t| t.id != id) {
+            let r = m.cmd(&["audio-remove", &t.id.to_string()]);
+            if let Err(e) = r {
+                crate::debug::log("player", &format!("dub: could not drop track {} ({})", t.id, e));
+            }
+        }
         if p.manual {
             // picked by hand: heard at once, the sync only fixes its delay
             self.audio_select(id);
