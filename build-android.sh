@@ -65,9 +65,12 @@ MPV_DIR="$ROOT/qt/third_party/mpv-android/$ABI"
 CXX_DIR="$ROOT/qt/third_party/mpv-android/cxx-$ABI"
 if ! ls "$MPV_DIR/"*.so >/dev/null 2>&1 || [ ! -f "$CXX_DIR/libc++_shared.so" ]; then
   MPV_TMP="$(mktemp -d)"
-  MPV_URL="$(curl -fsSL https://api.github.com/repos/mpv-android/mpv-android/releases/latest \
+  # with the workflow's token when there is one (the anonymous GitHub API is rate limited on shared runners), tried
+  # three times
+  GH_AUTH=(); [ -n "${GITHUB_TOKEN:-}" ] && GH_AUTH=(-H "Authorization: Bearer $GITHUB_TOKEN")
+  MPV_URL="$(curl -fsSL --retry 3 --retry-delay 5 --retry-all-errors "${GH_AUTH[@]}" https://api.github.com/repos/mpv-android/mpv-android/releases/latest \
     | python3 -c 'import json,sys; a=[x["browser_download_url"] for x in json.load(sys.stdin)["assets"] if x["name"].endswith(".apk")]; u=[x for x in a if "universal" in x and "api" not in x.rsplit("/",1)[1]] or [x for x in a if "universal" in x] or a; print(u[0] if u else "")' || true)"
-  if [ -n "$MPV_URL" ] && curl -fsSL -o "$MPV_TMP/mpv.apk" "$MPV_URL" \
+  if [ -n "$MPV_URL" ] && curl -fsSL --retry 3 --retry-delay 5 --retry-all-errors -o "$MPV_TMP/mpv.apk" "$MPV_URL" \
      && unzip -q -o "$MPV_TMP/mpv.apk" "lib/$ABI/*.so" -d "$MPV_TMP"; then
     mkdir -p "$MPV_DIR"
     find "$MPV_TMP/lib/$ABI" -name '*.so' ! -name libplayer.so ! -name 'libc++_shared.so' -exec cp -f {} "$MPV_DIR/" \;
@@ -81,6 +84,8 @@ if ! ls "$MPV_DIR/"*.so >/dev/null 2>&1 || [ ! -f "$CXX_DIR/libc++_shared.so" ];
 fi
 if ! ls "$MPV_DIR/"*.so >/dev/null 2>&1; then
   echo "== WARNING: no libmpv in qt/third_party/mpv-android/$ABI/: the APK will play no video"
+  # a release must never ship an APK that plays nothing (v0.8.3's first arm64 APK did)
+  if [ -n "${REELHOUSE_RELEASE:-}" ]; then echo "== stopping: a release build needs libmpv"; exit 1; fi
 fi
 
 # ---- OpenSSL for Qt's https (posters and covers): KDAB's prebuilt libraries, fetched once ----

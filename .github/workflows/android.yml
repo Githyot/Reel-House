@@ -107,6 +107,7 @@ jobs:
           ANDROID_NDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}/ndk/${{ env.NDK_VERSION }}
           QT_ANDROID: ${{ runner.temp }}/qt/Qt/${{ env.QT_VERSION }}/${{ matrix.qt_arch }}
           QT_HOST: ${{ runner.temp }}/qt/Qt/${{ env.QT_VERSION }}/gcc_64
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set +e
           bash build-android.sh
