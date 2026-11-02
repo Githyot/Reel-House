@@ -71,6 +71,8 @@ pub mod controller;
 #[cfg(feature = "app")]
 pub mod mpv;
 #[cfg(feature = "app")]
+pub mod mkvsubs;
+#[cfg(feature = "app")]
 pub mod net;
 #[cfg(feature = "app")]
 pub mod ankiweb;
