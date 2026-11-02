@@ -108,6 +108,8 @@ jobs:
           QT_ANDROID: ${{ runner.temp }}/qt/Qt/${{ env.QT_VERSION }}/${{ matrix.qt_arch }}
           QT_HOST: ${{ runner.temp }}/qt/Qt/${{ env.QT_VERSION }}/gcc_64
           GITHUB_TOKEN: ${{ github.token }}
+          # the one signing key of every APK, so a new version installs over the old one (see build-android.sh)
+          ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
         run: |
           set +e
           bash build-android.sh
