@@ -95,6 +95,12 @@ jobs:
             target-android
           key: android-${{ matrix.abi }}-${{ hashFiles('qtbridge/Cargo.lock', 'Cargo.lock', 'build-android.sh') }}
           restore-keys: android-${{ matrix.abi }}-
+      # The Anime4K shaders are built into the app (build.rs), as on Windows and Linux: without them the app had to
+      # download them, and that download failed on Android ("incomplete deflate stream").
+      - name: Fetch the Anime4K shaders into assets/
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash fetch-assets.sh shaders
       - name: Build (build-android.sh)
         env:
           ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
