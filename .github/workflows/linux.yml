@@ -300,7 +300,8 @@ jobs:
           # start the program without a screen and keep what Qt and QML complain about (a missing module or plugin
           # leaves parts of the window empty, such as the icons drawn with QtQuick.Shapes)
           dnf -y -q install mesa-dri-drivers mesa-libEGL fontconfig > /dev/null 2>&1
-          QT_QPA_PLATFORM=offscreen timeout 40 /opt/reelhouse/bin/reelhouse-qt > run.log 2>&1
+          QT_QPA_PLATFORM=offscreen QT_LOGGING_RULES="qt.scenegraph.general=true;qt.rhi.general=true" timeout 40 /opt/reelhouse/bin/reelhouse-qt > run.log 2>&1 || echo "program ended with $?"
+          echo "program output (last lines):"; tail -n 40 run.log | cut -c1-220
           echo "program output (warnings):"; grep -iE "not installed|is not a type|cannot|failed|error|warning|plugin" run.log | sort | uniq -c | sort -rn | cut -c1-220 | head -40
           if grep -qiE "module \"[^\"]+\" is not installed" run.log; then echo "::error::a QML module is missing from the package"; exit 1; fi
           if [ -f /opt/reelhouse/bin/libcef.so ]; then
