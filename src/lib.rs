@@ -38,6 +38,7 @@ pub mod appext;
 pub mod pagedb;
 #[cfg(feature = "webp")]
 pub mod webpstore;
+pub mod exthost;
 pub mod suwayomi;
 pub mod suwayomi_host;
 pub mod model;

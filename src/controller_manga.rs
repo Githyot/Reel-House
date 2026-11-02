@@ -158,6 +158,9 @@ impl Core {
 
     pub fn suwayomi_server(&self) -> suwayomi::Server {
         let g = &self.settings.general;
+        if let Some(port) = self.ext_host_port.filter(|_| g.suwayomi_managed) {
+            return suwayomi::Server::local_host(port, self.suwayomi_repos(), self.ext_host_dir.clone());
+        }
         if g.suwayomi_managed {
             return suwayomi::Server::new(&format!("http://127.0.0.1:{}", self.suwayomi_port), "", "");
         }
@@ -166,12 +169,40 @@ impl Core {
 
     /// True when the server (ours or the user's) can be asked things.
     pub fn suwayomi_ready(&self) -> bool {
-        !self.settings.general.suwayomi_managed || self.suwayomi_host.is_some()
+        !self.settings.general.suwayomi_managed || self.suwayomi_host.is_some() || self.ext_host_port.is_some()
+    }
+
+    /// Android runs the extensions itself (no Suwayomi there): the host started by the app is used at once.
+    fn uses_ext_host(&self) -> bool {
+        cfg!(target_os = "android") && self.settings.general.suwayomi_managed
+    }
+
+    /// Called once the Android app's extension host listens (bridge command "ext_host").
+    pub fn ext_host_up(&mut self, port: u16, dir: &str) {
+        crate::debug::log("extensions", &format!("extension host on port {} ({})", port, dir));
+        self.ext_host_dir = std::path::PathBuf::from(dir);
+        self.ext_host_port = if port > 0 { Some(port) } else { None };
+        if port == 0 {
+            self.suwayomi_status = "The extension host of the app did not start.".to_string();
+            self.events.push(Event::MangaSources);
+            return;
+        }
+        if self.suwayomi_boot_wanted || self.mode() == "images" {
+            self.suwayomi_connect();
+        }
     }
 
     /// Starts the server of the app when the Images mode wants it: downloaded once, then started hidden.
     pub fn suwayomi_boot(&mut self) {
         if !self.settings.general.suwayomi_managed || self.suwayomi_host.is_some() || self.suwayomi_booting {
+            return;
+        }
+        if self.uses_ext_host() {
+            // nothing to download or start: the app's own host answers once it listens (`ext_host_up`)
+            if self.ext_host_port.is_none() {
+                self.suwayomi_status = "Starting the extensions…".to_string();
+                self.events.push(Event::MangaSources);
+            }
             return;
         }
         self.suwayomi_booting = true;
@@ -224,7 +255,7 @@ impl Core {
 
     /// Called every tick: the server runs only while the Images mode is in use (a few minutes of grace when leaving it).
     pub fn suwayomi_tick(&mut self) {
-        if !self.settings.general.suwayomi_managed {
+        if !self.settings.general.suwayomi_managed || self.uses_ext_host() {
             return;
         }
         if self.mode() == "images" {
@@ -248,7 +279,7 @@ impl Core {
     /// Reads the sources the server has (starting the server of the app first when needed).
     pub fn suwayomi_connect(&mut self) {
         self.suwayomi_boot_wanted = true;
-        if self.settings.general.suwayomi_managed && self.suwayomi_host.is_none() {
+        if self.settings.general.suwayomi_managed && self.suwayomi_host.is_none() && self.ext_host_port.is_none() {
             self.suwayomi_boot();
             return;
         }

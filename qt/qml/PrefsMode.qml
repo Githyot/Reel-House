@@ -15,7 +15,10 @@ Column {
     readonly property var pt: Core.manga.pagetools || ({})
     readonly property bool images: kind === "images"
     // a phone with the Suwayomi address still on this device: no server can start here (Java)
-    readonly property bool phoneLocal: (Qt.platform.os === "android" || Qt.platform.os === "ios") && /^https?:\/\/(127\.0\.0\.1|localhost)/.test(g.suwayomi_url || "http://127.0.0.1")
+    // Android runs the extensions itself (docs/android-extensions.md); only a phone told to use a Suwayomi server at
+    // its own address (which it cannot run) gets the explanation below
+    readonly property bool ownHost: Qt.platform.os === "android" && g.suwayomi_managed !== false
+    readonly property bool phoneLocal: (Qt.platform.os === "ios" || (Qt.platform.os === "android" && g.suwayomi_managed === false)) && /^https?:\/\/(127\.0\.0\.1|localhost)/.test(g.suwayomi_url || "http://127.0.0.1")
     function tr(s) { return Core.tr(Core.uiLang, s) }
     function set(path, v) { Core.cmd({cmd: "set_setting", path: path, value: v}) }
     function idx(list, v) { const i = list.indexOf(v); return i < 0 ? 0 : i }
@@ -154,9 +157,9 @@ Column {
     // ================= Images: the Suwayomi server =================
     PrefGroup {
         visible: pm.images
-        title: pm.tr("Sources (Suwayomi)")
-        description: pm.tr("Suwayomi runs extensions in the Tachiyomi / Mihon format. The app downloads it once and runs it by itself while the Images mode is open. The app comes with no repository: add the ones you want below.")
-        PrefSwitch { title: pm.tr("Run it inside the app"); subtitle: pm.tr("Turn off to use a Suwayomi server you started yourself"); checked: pm.g.suwayomi_managed !== false; onToggled: function(on) { pm.set("general.suwayomi_managed", on) } }
+        title: Qt.platform.os === "android" ? pm.tr("Sources (extensions)") : pm.tr("Sources (Suwayomi)")
+        description: Qt.platform.os === "android" ? pm.tr("The app runs extensions in the Tachiyomi / Mihon format by itself. The app comes with no repository: add the ones you want below.") : pm.tr("Suwayomi runs extensions in the Tachiyomi / Mihon format. The app downloads it once and runs it by itself while the Images mode is open. The app comes with no repository: add the ones you want below.")
+        PrefSwitch { title: Qt.platform.os === "android" ? pm.tr("Run them inside the app") : pm.tr("Run it inside the app"); subtitle: Qt.platform.os === "android" ? pm.tr("Turn off to use a Suwayomi server instead") : pm.tr("Turn off to use a Suwayomi server you started yourself"); checked: pm.g.suwayomi_managed !== false; onToggled: function(on) { pm.set("general.suwayomi_managed", on) } }
         PrefEntry { visible: pm.g.suwayomi_managed === false; first: false; title: pm.tr("Server address"); text: pm.g.suwayomi_url || ""; onEdited: function(t) { pm.set("general.suwayomi_url", t.trim()) } }
         PrefEntry { visible: pm.g.suwayomi_managed === false; first: false; title: pm.tr("User name (leave empty if there is none)"); text: pm.g.suwayomi_user || ""; onEdited: function(t) { pm.set("general.suwayomi_user", t.trim()) } }
         PrefEntry { visible: pm.g.suwayomi_managed === false; first: false; title: pm.tr("Password"); password: true; text: pm.g.suwayomi_pass || ""; onEdited: function(t) { pm.set("general.suwayomi_pass", t) } }

@@ -596,6 +596,10 @@ pub struct Core {
     suwayomi_booting: bool,
     suwayomi_boot_wanted: bool,
     suwayomi_port: u16,
+    /// Android: port of the app's own extension host (docs/android-extensions.md), which replaces Suwayomi there.
+    pub ext_host_port: Option<u16>,
+    /// The host's folder: it installs only APKs saved inside it.
+    pub ext_host_dir: std::path::PathBuf,
     suwayomi_idle: Option<std::time::Instant>,
     manga_refreshing: bool,
     manga_resume: u32,
@@ -1620,6 +1624,8 @@ impl Core {
             suwayomi_booting: false,
             suwayomi_boot_wanted: false,
             suwayomi_port: crate::suwayomi::DEFAULT_PORT,
+            ext_host_port: None,
+            ext_host_dir: std::path::PathBuf::new(),
             suwayomi_idle: None,
             manga_refreshing: false,
             manga_resume: 0,
