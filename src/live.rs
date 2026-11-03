@@ -810,21 +810,9 @@ pub struct TlsDialer;
 
 impl Dialer for TlsDialer {
     fn dial(&mut self, key: &str) -> Result<Box<dyn Wire>, String> {
-        use std::net::ToSocketAddrs;
         let hide = |t: String| if key.is_empty() { t } else { t.replace(key, "***") };
-        let addrs: Vec<std::net::SocketAddr> = (HOST, 443).to_socket_addrs().map_err(|e| format!("{} could not be found ({})", HOST, e))?.collect();
-        let mut last = String::from("no address");
-        let mut tcp = None;
-        for a in &addrs {
-            match std::net::TcpStream::connect_timeout(a, Duration::from_secs(10)) {
-                Ok(t) => {
-                    tcp = Some(t);
-                    break;
-                }
-                Err(e) => last = e.to_string(),
-            }
-        }
-        let tcp = tcp.ok_or_else(|| format!("no connection to {} ({})", HOST, last))?;
+        // through IP protection's gateway when it is on (src/privacy.rs), else straight
+        let tcp = crate::privacy::connect_tcp(HOST, 443, Duration::from_secs(10)).map_err(|e| format!("no connection to {} ({})", HOST, e))?;
         let _ = tcp.set_nodelay(true);
         let _ = tcp.set_read_timeout(Some(Duration::from_secs(15)));
         let ctl = tcp.try_clone().map_err(|e| e.to_string())?;

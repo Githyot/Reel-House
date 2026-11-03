@@ -45,6 +45,8 @@ size_t rh_ds4_poll(float *out, size_t cap);
 unsigned char *rh_nav_blip(int kind, size_t *len);
 // What this build of the core can do where it runs (JSON: os, mobile, localProcesses, browser...). Free with rh_free_str.
 char *rh_platform_caps(void);
+// IP protection (src/privacy.rs): the local gateway's port when the app's traffic must go through it, else 0.
+int rh_privacy_port(void);
 char *rh_tr(const char *lang, const char *text);
 // Research mode's ad blocker: 1 when a request of a page should be cancelled (any thread; kind "script", "image"...).
 int rh_adblock_check(const char *url, const char *source, const char *kind);

@@ -40,6 +40,8 @@ class CoreBridge : public QObject {
     Q_PROPERTY(QVariantMap profiles READ profiles NOTIFY profilesChanged)
     // the connection: {online, network, forced} (src/connectivity.rs); offline, only what is on disk opens
     Q_PROPERTY(QVariantMap net READ net NOTIFY netChanged)
+    // IP protection (src/privacy.rs): {mode, phase, message, exit_ip, progress, proxy_port, proxy_url, wg_name...}
+    Q_PROPERTY(QVariantMap privacy READ privacy NOTIFY privacyChanged)
     // The language of the menus and buttons ("en", "pt-BR", "es"): the preference, or the system's when it says so.
     Q_PROPERTY(QString uiLang READ uiLang NOTIFY uiLangChanged)
     // "Reload the covers": the generation pictures are asked with, and how far the reload is ({active, asked, done}).
@@ -66,6 +68,7 @@ public:
     QVariantMap notices() const { return m_notices; }
     QVariantMap profiles() const { return m_profiles; }
     QVariantMap net() const { return m_net; }
+    QVariantMap privacy() const { return m_privacy; }
     QVariantMap genre() const { return m_genre; }
     QVariantMap calendar() const { return m_calendar; }
     QVariantMap prefs() const { return m_prefs; }
@@ -183,6 +186,7 @@ signals:
     void mangaChanged();
     void profilesChanged();
     void netChanged();
+    void privacyChanged();
     void picReloadChanged();
     // A preview picture of the video at `t` seconds is ready (the seek bar).
     // `t`: time of the picture's slot; `url`: file URL of the JPEG.
@@ -216,6 +220,9 @@ private:
     QVariantMap m_home, m_search, m_library, m_detail, m_player, m_settings, m_notices, m_genre, m_calendar, m_prefs, m_infos, m_tasks, m_dlpick, m_torrents, m_manga, m_study, m_xray, m_playback;
     QVariantMap m_profiles;
     QVariantMap m_net{{"online", true}, {"network", true}, {"forced", false}};
+    QVariantMap m_privacy;
+    int m_privacyPort = -1;
+    void applyPrivacyProxy(int port);
     QByteArray m_tasksRaw;
     int m_tickCount = 0;
     int m_picGen = 0;

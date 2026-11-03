@@ -241,6 +241,7 @@ qt_add_resources(reelhouse-qt "app" PREFIX "/" FILES
     qml/PrefsShortcuts.qml
     qml/PrefsSubtitles.qml
     qml/PrefsTorrents.qml
+    qml/PrefsPrivacy.qml
     qml/PrefsTranslators.qml
     qml/ProfileAvatar.qml
     qml/ProfileButton.qml

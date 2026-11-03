@@ -48,6 +48,12 @@ pub mod orbs;
 pub mod outline;
 pub mod palette;
 pub mod platform;
+/// IP protection ("VPN inside the app"): proxy, WireGuard and Tor through a local gateway.
+#[cfg(feature = "privacy")]
+pub mod privacy;
+#[cfg(not(feature = "privacy"))]
+#[path = "privacy_off.rs"]
+pub mod privacy;
 pub mod profiles;
 pub mod richtext;
 pub mod settings;

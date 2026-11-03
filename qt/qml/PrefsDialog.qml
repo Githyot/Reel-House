@@ -224,6 +224,9 @@ Popup {
                     }
                 }
 
+                // the "VPN inside the app": Tor, WireGuard, a proxy or the system VPN (src/privacy.rs)
+                PrefsPrivacy {}
+
                 PrefGroup {
                     title: Core.tr(Core.uiLang, "Playback")
                     PrefCombo {
@@ -759,7 +762,7 @@ Popup {
                         delegate: PrefSwitch {
                             required property var modelData
                             title: modelData.name
-                            subtitle: modelData.url
+                            subtitle: modelData.needsSetup === true ? Core.tr(Core.uiLang, "Not set up: it ignores every request. Remove it and add the link from its /configure page.") + "\n" + modelData.url : modelData.url
                             checked: modelData.enabled
                             onToggled: function(on) { Core.cmd({cmd: "toggle_addon", url: modelData.url, on: on}) }
                             FlatButton { anchors.verticalCenter: parent.verticalCenter; kind: "flat"; glyph: "trash"; implicitWidth: 34; implicitHeight: 34; ToolTip.visible: hovered; ToolTip.text: Core.tr(Core.uiLang, "Remove"); onClicked: Core.cmd({cmd: "remove_addon", url: modelData.url}) }
@@ -771,11 +774,6 @@ Popup {
                     description: Core.tr(Core.uiLang, "Paste a manifest link, or a stremio:// link.")
                     PrefEntry { id: addonEntry; title: Core.tr(Core.uiLang, "Manifest URL"); apply: true; onApplied: function(t) { Core.cmd({cmd: "install_addon", url: t.trim()}); addonEntry.clear() } }
                     PrefRow { title: Core.tr(Core.uiLang, "Status"); subtitle: dlg.info("addon") }
-                }
-                PrefGroup {
-                    title: Core.tr(Core.uiLang, "Suggested")
-                    description: Core.tr(Core.uiLang, "This one needs a personal install link. Open the page, copy the link, and paste it above.")
-                    PrefButton { title: Core.tr(Core.uiLang, "SubSource subtitles"); subtitle: Core.tr(Core.uiLang, "Extra subtitles from subsource.net"); label: Core.tr(Core.uiLang, "Open"); onActivated: Qt.openUrlExternally("https://stremio-addons.net/addons/subsource-subtitles") }
                 }
 
                 // ---------- Accounts ----------
@@ -822,6 +820,7 @@ Popup {
             // ================= Torrents, Subtitles & karaoke, Shortcuts =================
             PrefsTorrents {
                 id: torrentsPage
+                g: dlg.g
                 visible: dlg.cur === "torrents"
                 x: Math.max(18, (scroll.width - 640) / 2)
                 y: 22

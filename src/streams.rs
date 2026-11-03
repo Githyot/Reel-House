@@ -458,7 +458,8 @@ pub fn magnet(s: &Stream) -> Option<String> {
             m.push_str(&format!("&tr={}", form_encode(t)));
         }
     }
-    Some(m)
+    // IP protection on: the UDP trackers (which cannot go through the tunnel) are asked over HTTP instead
+    Some(crate::privacy::magnet_for_tunnel(&m))
 }
 
 #[cfg(test)]

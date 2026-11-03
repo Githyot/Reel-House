@@ -452,6 +452,10 @@ impl Drop for RqbitProcess {
             let _ = c.kill();
             let _ = c.wait();
         }
+        #[cfg(feature = "torrent-embed")]
+        if self.child.is_none() {
+            crate::torrent_embed::stop(self.port);
+        }
     }
 }
 

@@ -105,6 +105,21 @@ pub fn validate_manifest(m: &Json) -> Result<(), String> {
     Ok(())
 }
 
+/// True when the manifest asks to be configured first (`behaviorHints.configurationRequired`) and the
+/// link has no settings in its path (`https://host/manifest.json`). Such a link answers the manifest
+/// but every catalog, stream or subtitle request fails until the user makes a personal link on the
+/// addon's own page. A configured link carries the settings in its path, so it is never caught here.
+pub fn needs_setup(url: &str, m: &Json) -> bool {
+    if m.get("behaviorHints").get("configurationRequired").as_bool() != Some(true) {
+        return false;
+    }
+    let base = base_of(url);
+    let after_scheme = base.split("://").nth(1).unwrap_or(&base);
+    !after_scheme.contains('/')
+}
+
+pub const NEEDS_SETUP: &str = "This addon has to be set up on its own page first. Open its link in a browser with /configure in place of /manifest.json, pick the options (some ask for a free API key) and paste here the manifest link that page gives you.";
+
 pub fn fetch_manifest(http: &dyn Http, url: &str) -> Result<Json, String> {
     let m = get_json(http, url, 20)?;
     validate_manifest(&m)?;
@@ -132,6 +147,9 @@ pub fn install(http: &dyn Http, entries: &mut Vec<AddonEntry>, input: &str) -> R
             }
         }
     };
+    if needs_setup(&url, &manifest) {
+        return Err(NEEDS_SETUP.to_string());
+    }
     let id = manifest.get("id").str();
     let name = manifest.get("name").str();
     entries.retain(|e| e.url != url && e.manifest.get("id").str() != id);
@@ -153,7 +171,7 @@ pub fn refresh_missing(http: &dyn Http, entries: &mut [AddonEntry]) -> Vec<Strin
 
 pub fn list_catalogs(entries: &[AddonEntry]) -> Vec<CatalogRef> {
     let mut out = Vec::new();
-    for e in entries.iter().filter(|e| e.enabled && e.has_manifest()) {
+    for e in entries.iter().filter(|e| e.enabled && e.has_manifest() && !e.needs_setup()) {
         for c in e.manifest.get("catalogs").items() {
             let kind = c.get("type").str();
             if !supports(&e.manifest, "catalog", &kind, "") {
@@ -204,7 +222,7 @@ pub fn fetch_catalog(http: &dyn Http, cat: &CatalogRef, extra: &[(&str, &str)]) 
 }
 
 pub fn fetch_meta(http: &dyn Http, entries: &[AddonEntry], kind: &str, id: &str) -> Option<MetaItem> {
-    for e in entries.iter().filter(|e| e.enabled && e.has_manifest() && supports(&e.manifest, "meta", kind, id)) {
+    for e in entries.iter().filter(|e| e.enabled && e.has_manifest() && !e.needs_setup() && supports(&e.manifest, "meta", kind, id)) {
         let url = resource_url(&e.url, "meta", kind, id, &[]);
         if let Ok(j) = get_json(http, &url, 20) {
             let m = j.get("meta");
@@ -237,7 +255,7 @@ fn fan_out<T: Send>(
     parse: &(dyn Fn(&Json, &str) -> Vec<T> + Sync),
 ) -> Fetched<T> {
     let targets: Vec<&AddonEntry> =
-        entries.iter().filter(|e| e.enabled && e.has_manifest() && supports(&e.manifest, resource, kind, id)).collect();
+        entries.iter().filter(|e| e.enabled && e.has_manifest() && !e.needs_setup() && supports(&e.manifest, resource, kind, id)).collect();
     let mut out = Fetched { items: Vec::new(), errors: Vec::new() };
     std::thread::scope(|sc| {
         let handles: Vec<_> = targets
@@ -408,6 +426,22 @@ mod tests {
         let errs = refresh_missing(&http, &mut entries);
         assert_eq!(errs.len(), 1);
         assert!(entries[0].has_manifest() == false && entries[1].has_manifest());
+    }
+
+    #[test]
+    fn bare_link_of_an_addon_that_needs_setup_is_refused() {
+        let m = Json::parse(r#"{"id":"x","name":"X","version":"1","resources":["subtitles"],"behaviorHints":{"configurable":true,"configurationRequired":true}}"#).unwrap();
+        assert!(needs_setup("https://subs.example/manifest.json", &m));
+        assert!(!needs_setup("https://subs.example/eyJrZXkiOiJhYmMifQ/manifest.json", &m));
+        let free = Json::parse(r#"{"id":"x","name":"X","version":"1","resources":["subtitles"],"behaviorHints":{"configurable":true}}"#).unwrap();
+        assert!(!needs_setup("https://subs.example/manifest.json", &free));
+        let http = Fake::new().route("/manifest.json", 200, r#"{"id":"x","name":"X","version":"1","resources":["subtitles"],"behaviorHints":{"configurationRequired":true}}"#);
+        let mut e = Vec::new();
+        assert_eq!(install(&http, &mut e, "https://subs.example/manifest.json"), Err(NEEDS_SETUP.to_string()));
+        assert!(e.is_empty());
+        let old = vec![AddonEntry { url: "https://subs.example/manifest.json".into(), enabled: true, manifest: m }];
+        let _ = fetch_subtitles(&http, &old, "movie", "tt1");
+        assert!(http.requests().iter().all(|r| !r.url.contains("subs.example/subtitles")));
     }
 
     #[test]

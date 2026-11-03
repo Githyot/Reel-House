@@ -128,6 +128,8 @@ pub mod timetrack;
 pub mod controller_time;
 #[path = "controller_net.rs"]
 pub mod controller_net;
+#[path = "controller_privacy.rs"]
+pub mod controller_privacy;
 use crate::{anime4k, substyle, translate, util};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -242,6 +244,8 @@ pub enum Event {
 }
 
 pub enum Msg {
+    /// IP protection: a Cloudflare WARP tunnel made (its wg-quick file) or why not (controller_privacy.rs).
+    PrivacyWarp(Result<String, String>),
     Row(u64, usize, Row),
     HomeError(u64, String),
     HomeDone(u64),
@@ -363,6 +367,10 @@ pub enum Msg {
     DlAdded(Result<Download, String>, String),
     DlProgress(String, f64, Vec<usize>, bool),
     DlRemoved(String, bool),
+    /// A watched episode's file was deleted (info hash of its torrent).
+    DlPurged(String),
+    /// The cache limit freed this many bytes.
+    DlEvicted(u64),
 }
 
 pub struct StreamsState {
@@ -452,6 +460,9 @@ pub struct Session {
     pub torrent: Option<(String, u64, String)>,
     /// Already counted as watched.
     pub marked: bool,
+    /// The file of this episode in the torrents folder, noted when it was watched to the end:
+    /// deleted once the player lets go of it (controller_dl).
+    pub finished: Option<controller_dl::Finished>,
     pub next_dismissed: bool,
     pub next_started: bool,
     pub meta: Option<MetaItem>,
@@ -709,6 +720,8 @@ fn ensure_engine(
     status: &dyn Fn(String),
 ) -> Result<String, String> {
     // Android: the engine runs inside the app (no program to download or start).
+    // IP protection: Tor refuses torrents unless allowed; a tunnel that does not work stops them (kill switch)
+    crate::privacy::torrent_allowed()?;
     #[cfg(feature = "torrent-embed")]
     {
         let _ = (rqbit_exe, runtime_dir);
@@ -735,11 +748,15 @@ fn ensure_engine(
         let mut last = String::new();
         for attempt in 0..3 {
             let port = free_port()?;
-            let extra: Vec<String> = match attempt {
+            let mut extra: Vec<String> = match attempt {
                 0 => vec![],
+                // with IP protection nothing listens, so no other peer port is needed
+                1 if crate::privacy::active() => vec![],
                 1 => vec!["--listen-port".to_string(), free_port()?.to_string()],
                 _ => vec!["--ipv4-only".to_string()],
             };
+            // IP protection: peers only through the tunnel (SOCKS5), no DHT, UPnP, local discovery or listening
+            extra.extend(crate::privacy::rqbit_args());
             let started = RqbitProcess::start(&exe, dl_dir, port, &extra).and_then(|mut p| p.wait_ready(http, 20).map(|_| p));
             match started {
                 Ok(p) => {
@@ -1112,6 +1129,7 @@ impl Core {
                 s.marked = true;
             }
             self.mark_watched(&sid);
+            self.dl_note_finished();
         }
         // (two fields, not a clone of the whole General: this runs on every tick of the player)
         let (autoplay_next, next_popup_secs) = (self.settings.general.autoplay_next, self.settings.general.next_popup_secs);
@@ -1748,6 +1766,7 @@ impl Core {
         c.refresh_mal_list();
         c.load_taste();
         c.dl_resume_all();
+        c.dl_startup_cleanup();
         // the course of the study language, read in the background: its words cut subtitle lines into words
         c.learn_ensure();
         c
@@ -2532,6 +2551,7 @@ impl Core {
             Msg::MangaCounts(c) => self.on_manga_counts(c),
             Msg::SuwayomiSources(r) => self.on_suwayomi_sources(r),
             Msg::SuwayomiExts(r) => self.on_suwayomi_exts(r),
+            Msg::PrivacyWarp(r) => self.on_privacy_warp(r),
             Msg::SuwayomiDone(t) => self.on_suwayomi_done(t),
             Msg::SuwayomiStatus(t) => {
                 crate::debug::log("suwayomi", &t);
@@ -2606,6 +2626,14 @@ impl Core {
             Msg::DlStreams(g, l, e) => self.on_dl_streams(g, l, e),
             Msg::DlAdded(r, h) => self.on_dl_added(r, h),
             Msg::DlProgress(h, p, d, c) => self.on_dl_progress(h, p, d, c),
+            Msg::DlPurged(hash) => self.on_dl_purged(hash),
+            Msg::DlEvicted(freed) => {
+                if freed > 0 {
+                    self.toast(&format!("Cache limit: freed {}.", torrent::human_bytes(freed)));
+                }
+                self.events.push(Event::Downloads);
+                self.events.push(Event::Detail);
+            }
             Msg::DlRemoved(text, restart) => {
                 self.toast(&text);
                 self.events.push(Event::Downloads);
@@ -2792,6 +2820,8 @@ impl Core {
         self.kaiwa_release();
         // a dub streamed for the last episode stops downloading
         self.dub_drop();
+        // the episode that was playing, if it was watched to the end, leaves the disk (not when the same one starts again)
+        let finished = self.session.as_mut().filter(|s| s.sid != sid).and_then(|s| s.finished.take());
         self.token_counter += 1;
         self.session = Some(Session {
             id: self.token_counter,
@@ -2826,6 +2856,7 @@ impl Core {
             chapters: vec![],
             torrent: None,
             marked: false,
+            finished: None,
             next_dismissed: false,
             next_started: false,
             meta: None,
@@ -2835,6 +2866,9 @@ impl Core {
             theme: Default::default(),
             xray: Default::default(),
         });
+        if let Some(f) = finished {
+            self.dl_purge(f);
+        }
         if let Some(s) = self.session.as_mut() {
             s.meta = self.detail.as_ref().map(|d| {
                 let mut m = d.meta.clone();
@@ -3391,14 +3425,20 @@ impl Core {
         self.save_progress_now();
         self.prefetch = None;
         self.preresolved = None;
-        if let Some(s) = self.session.take() {
+        let finished = self.session.take().and_then(|s| {
             s.cancel.store(true, Ordering::SeqCst);
-        }
+            s.finished
+        });
         self.dub_drop();
         self.stop_thumbs();
         if let Some(m) = &self.mpv {
             let _ = m.cmd(&["stop"]);
         }
+        // the episode watched to the end leaves the disk, and the cache goes back under its limit
+        if let Some(f) = finished {
+            self.dl_purge(f);
+        }
+        self.dl_enforce_limit();
         // the opening / ending video of the X-Ray would go on playing
         self.theme_stop_quiet();
         // what belonged to this video: the clock, and the study hint shown over its subtitles
