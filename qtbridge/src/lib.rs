@@ -2271,6 +2271,7 @@ fn run_cmd(b: &Bridge, j: &Json) -> Json {
                 c.load_home();
             }
             "install_addon" => c.install_addon(&j.get("url").str()),
+            "add_any_addon" => c.add_any_addon(&j.get("url").str(), &j.get("kind").str()),
             "remove_addon" => c.remove_addon(&j.get("url").str()),
             "test_real_debrid" => c.test_real_debrid(),
             "anime_skip_login" => c.anime_skip_login(&j.get("email").str(), &j.get("password").str()),

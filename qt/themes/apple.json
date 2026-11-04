@@ -2,14 +2,25 @@
   "id": "apple",
   "look": "apple",
   "name": "Apple",
-  "description": "Apple Human Interface Guidelines: floating glass sidebar, large titles, capsule controls, blurred translucent materials (ultra-thin to thick), concentric corners, SF-style type and iOS switches.",
+  "description": "Apple Human Interface Guidelines, one theme for every device: on a desktop the floating glass sidebar, large titles, capsule controls, blurred translucent materials, concentric corners, SF-style type and iOS switches; on a phone (or a narrow window) the iOS system colours, the SF text styles at their Dynamic Type sizes, 44 pt targets, inset grouped lists, a bottom tab bar and sheets with a grabber.",
   "sources": [
     "https://developer.apple.com/design/human-interface-guidelines/materials",
     "https://developer.apple.com/design/human-interface-guidelines/color",
     "https://developer.apple.com/design/human-interface-guidelines/typography",
     "https://developer.apple.com/design/human-interface-guidelines/sidebars",
-    "https://developer.apple.com/design/human-interface-guidelines/layout"
+    "https://developer.apple.com/design/human-interface-guidelines/layout",
+    "https://developer.apple.com/design/human-interface-guidelines/designing-for-ios",
+    "https://developer.apple.com/design/human-interface-guidelines/tab-bars",
+    "https://developer.apple.com/design/human-interface-guidelines/sheets",
+    "https://developer.apple.com/design/human-interface-guidelines/lists-and-tables"
   ],
+  "schema": {
+    "look": "apple: the components draw the Apple controls (iOS switch, traffic lights on a desktop, the Apple colour chooser) and the app icon of the Apple theme.",
+    "colors": "the iOS system colours beside the shared names: label/secondaryLabel/tertiaryLabel/quaternaryLabel (label2..4), systemBackground tiers (view, surface, surface2), systemGroupedBackground (groupedBg) and its cards (groupedCard), separator, the fills (fill, fill2, fill3), tabBar, grabber; accent = systemBlue.",
+    "typography": "the SF text styles at the default Dynamic Type size: largeTitle 34/700, title1 28, title2 22, title3 20, headline 17/600, body 17, callout 16, subheadline 15, footnote 13, caption1 12, caption2 11 (typography.textStyles); the UI roles below are the desktop sizes, typography.mobile the phone sizes.",
+    "mobile": "phone metrics read by the pages when Theme.mobile: target 44, rowH 44 / row2H 60, barH 49 (tab bar, plus the home-indicator inset), nav tab-bar, dialog sheet (full height, grabber), fab false (the primary action stays in the bar), minText 14, seekStep 10 s, navLabel 11, appBarH 44.",
+    "phone": "what changes on a phone (Theme.mobile: a phone build or a narrow window): merged over the theme, key by key. It holds the iOS values (system colours, grouped backgrounds, separators, tab bar, the Dynamic Type sizes, the tighter iOS corners); the desktop keeps the macOS-style values above. The former iOS theme was folded into this one."
+  },
   "colors": {
     "dark": {
       "window": "#000000",
@@ -91,7 +102,7 @@
       "rating": "#8b6200",
       "star": "#ffcc00",
       "starEdge": "#a87400",
-      "panelDark": "#f2f2f7ee",
+      "panelDark": "#eef2f2f7",
       "loadingBg": "#e5e5ea",
       "chip": "#1f787880",
       "posterBg": "#14787880",
@@ -308,5 +319,99 @@
     "maxTabs": 5
   },
   "icons": "lucide",
-  "iconStroke": 1.75
+  "iconStroke": 1.75,
+  "phone": {
+    "colors": {
+      "dark": {
+        "view": "#1c1c1e",
+        "surface2": "#2c2c2e",
+        "scrim": "#66000000",
+        "warning": "#ffd60a",
+        "error": "#ff453a",
+        "rating": "#ffd60a",
+        "accentFaded": "#8a0a84ff",
+        "errorBg": "#ff453a",
+        "groupedBg": "#000000",
+        "groupedCard": "#1c1c1e",
+        "separator": "#99545458",
+        "tabBar": "#f5161618",
+        "grabber": "#5c787880",
+        "systemGray": "#8e8e93",
+        "systemGray2": "#636366",
+        "systemGray3": "#48484a",
+        "systemGray4": "#3a3a3c",
+        "systemGray5": "#2c2c2e",
+        "systemGray6": "#1c1c1e",
+        "fab": "#0a84ff",
+        "onFab": "#ffffff"
+      },
+      "light": {
+        "headerbar": "#b3f9f9f9",
+        "surface2": "#f2f2f7",
+        "scrim": "#33000000",
+        "success": "#34c759",
+        "warning": "#ff9500",
+        "error": "#ff3b30",
+        "errorBg": "#ff3b30",
+        "groupedBg": "#f2f2f7",
+        "groupedCard": "#ffffff",
+        "separator": "#4a3c3c43",
+        "tabBar": "#f5f9f9f9",
+        "grabber": "#4d3c3c43",
+        "systemGray": "#8e8e93",
+        "systemGray2": "#aeaeb2",
+        "systemGray3": "#c7c7cc",
+        "systemGray4": "#d1d1d6",
+        "systemGray5": "#e5e5ea",
+        "systemGray6": "#f2f2f7",
+        "fab": "#007aff",
+        "onFab": "#ffffff"
+      }
+    },
+    "typography": {
+      "heading": {
+        "size": 17,
+        "letterSpacing": -0.4
+      },
+      "body": {
+        "size": 15,
+        "letterSpacing": -0.2
+      },
+      "caption": {
+        "size": 13
+      },
+      "textStyles": {
+        "largeTitle": 34,
+        "title1": 28,
+        "title2": 22,
+        "title3": 20,
+        "headline": 17,
+        "body": 17,
+        "callout": 16,
+        "subheadline": 15,
+        "footnote": 13,
+        "caption1": 12,
+        "caption2": 11
+      },
+      "mobile": {
+        "largeTitle": 34,
+        "title": 22,
+        "heading": 17,
+        "body": 17,
+        "caption": 13
+      }
+    },
+    "shape": {
+      "medium": 10,
+      "large": 16,
+      "card": 10,
+      "popover": 14,
+      "sheet": 12,
+      "fab": 28,
+      "chip": 999
+    },
+    "layout": {
+      "stateLayers": false
+    }
+  }
 }

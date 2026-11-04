@@ -198,7 +198,7 @@ Item {
                 visible: bub.it.reviewed === true && (bub.textMode || bub.active)
                 anchors { right: parent.right; top: parent.top; margins: -6 }
                 width: 16; height: 16; radius: 8; color: Theme.c.success; z: 5
-                Icon { anchors.centerIn: parent; name: "check"; size: 12; color: "#ffffff" }
+                Icon { anchors.centerIn: parent; name: "check"; size: 12; color: Theme.c.greenFg }
             }
             // a bubble in the study language whose words are all known: a small "quiz me" button in its corner
             // (docs/study-in-readers.md; the core marks the blocks of the page as "known")

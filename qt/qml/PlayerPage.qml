@@ -984,7 +984,7 @@ Item {
                     id: swBtn
                     visible: page.arr(page.p.studySwaps).length > 0
                     kind: "osd"; active: swapsPop.visible
-                    ToolTip.visible: hovered; ToolTip.text: Core.tr(Core.uiLang, "Words the macaw swapped in this episode")
+                    ToolTip.visible: hovered; ToolTip.text: Core.tr(Core.uiLang, "Words Arara swapped in this episode")
                     onClicked: swapsPop.openAbove(swBtn)
                     Mascot { anchors.centerIn: parent; size: 28; mood: swapsPop.visible ? "happy" : "peek"; animate: false; tappable: false }
                     Rectangle {

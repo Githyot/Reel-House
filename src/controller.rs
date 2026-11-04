@@ -253,6 +253,8 @@ pub enum Msg {
     SearchDone(u64),
     Manifests(Vec<AddonEntry>, Vec<String>),
     AddonInstalled(Result<(Vec<AddonEntry>, String), String>),
+    /// The one addon box of Preferences: the link and the mode its answer belongs to.
+    AddonKind(String, Option<crate::addon_kind::Kind>),
     Meta(u64, Option<MetaItem>),
     Art(u64, Art),
     Streams(u64, Vec<Stream>, Vec<String>),
@@ -1463,7 +1465,7 @@ impl Core {
                 let picked = streams::autoplay_pick(&list, cur_stream.as_ref(), None, rule.as_ref());
                 let cur_res = cur_stream.as_ref().map(|x| x.res).unwrap_or(0);
                 if rule.is_none() && cur_res != 0 && list[picked].res != cur_res {
-                    list.iter().position(|s| s.res == cur_res).unwrap_or(picked)
+                    list.iter().position(|s| s.res == cur_res && s.is_playable()).unwrap_or(picked)
                 } else {
                     picked
                 }
@@ -2378,6 +2380,10 @@ impl Core {
                 self.load_home();
                 self.home_errors.extend(errors);
             }
+            Msg::AddonKind(text, kind) => match kind {
+                Some(k) => self.add_addon_as(&text, k),
+                None => self.events.push(Event::Info(MsgKind::Addon, crate::addon_kind::UNKNOWN.to_string())),
+            },
             Msg::AddonInstalled(r) => match r {
                 Ok((entries, name)) => {
                     self.settings.addons = entries;
@@ -3149,7 +3155,23 @@ impl Core {
         }
         let _ = mpv.set("pause", "yes");
         let _ = mpv.set("demuxer-readahead-secs", &format!("{}", (g.buffer_seconds * 3).max(30)));
-        let _ = mpv.set("demuxer-max-bytes", "512MiB");
+        // What mpv reads ahead is kept in a file on the disk, not in memory (it was up to 512 MB + 50 MB behind in
+        // RAM). A phone keeps a smaller buffer in memory (its libmpv and storage vary too much for the disk cache).
+        if cfg!(target_os = "android") {
+            let _ = mpv.set("demuxer-max-bytes", "96MiB");
+            let _ = mpv.set("demuxer-max-back-bytes", "24MiB");
+        } else {
+            let dir = self.data_dir.join("cache").join("mpv");
+            if std::fs::create_dir_all(&dir).is_ok() {
+                let _ = mpv.set("cache-dir", &dir.to_string_lossy());
+                let _ = mpv.set("cache-on-disk", "yes");
+                let _ = mpv.set("demuxer-max-bytes", "512MiB");
+                let _ = mpv.set("demuxer-max-back-bytes", "128MiB");
+            } else {
+                let _ = mpv.set("demuxer-max-bytes", "192MiB");
+                let _ = mpv.set("demuxer-max-back-bytes", "32MiB");
+            }
+        }
         let _ = mpv.set("start", &if s.start_pos > 1.0 { format!("{:.1}", s.start_pos) } else { "none".to_string() });
         let _ = mpv.set("http-header-fields", &crate::mpv::header_list(&res.headers));
         let _ = mpv.set("sub-visibility", "yes");
@@ -3515,6 +3537,48 @@ impl Core {
         });
     }
 
+    /// The one addon box of Preferences > Addons & accounts: a video addon, a repository of manga / comic
+    /// extensions or a list of novel plugins. `kind` is "auto" (found out from the link, or from its answer) or a mode.
+    pub fn add_any_addon(&mut self, text: &str, kind: &str) {
+        use crate::addon_kind::{self, Kind};
+        let text = text.trim().to_string();
+        if text.is_empty() {
+            self.events.push(Event::Info(MsgKind::Addon, "Paste the link of the addon.".to_string()));
+            return;
+        }
+        if let Some(k) = Kind::from_id(kind).or_else(|| addon_kind::guess(&text)) {
+            self.add_addon_as(&text, k);
+            return;
+        }
+        self.events.push(Event::Info(MsgKind::Addon, "Reading the link…".to_string()));
+        self.spawn(move |tx, http| {
+            let url = if text.starts_with("http://") || text.starts_with("https://") { text.clone() } else { format!("https://{}", text) };
+            let kind = crate::http::get_json(&*http, &url, 30).ok().and_then(|j| addon_kind::classify(&j));
+            send(tx, Msg::AddonKind(text, kind));
+        });
+    }
+
+    pub fn add_addon_as(&mut self, text: &str, kind: crate::addon_kind::Kind) {
+        use crate::addon_kind::Kind;
+        crate::debug::log("addons", &format!("add {:?}: {}", kind, text));
+        match kind {
+            Kind::Video => self.install_addon(text),
+            Kind::Images => {
+                let msg = match self.suwayomi_add_repo(text) {
+                    Ok(()) => "Added to Images: its sources are in Images > Sources.".to_string(),
+                    Err(e) => e,
+                };
+                self.events.push(Event::Info(MsgKind::Addon, msg));
+            }
+            Kind::Text => {
+                self.settings.general.text_repo = text.to_string();
+                self.save_settings();
+                self.novel_load_catalog();
+                self.events.push(Event::Info(MsgKind::Addon, "Added to Text: its sources are in Text > Sources.".to_string()));
+            }
+        }
+    }
+
     pub fn remove_addon(&mut self, url: &str) {
         self.settings.addons.retain(|a| a.url != url);
         self.save_settings();
@@ -3577,6 +3641,13 @@ impl Core {
         self.kaiwa_live_shutdown();
         // the last seconds of study time
         self.time_flush();
+        // where the readers are (written only every few pages while reading)
+        if self.manga_reader.is_some() {
+            self.save_manga();
+        }
+        if self.novel_reader.is_some() {
+            self.save_novels();
+        }
         let _ = self.settings.save(&self.data_dir);
     }
 

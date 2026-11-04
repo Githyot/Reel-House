@@ -1,6 +1,7 @@
 //! Reelhouse core. Everything here uses only the standard library, so it builds and tests anywhere.
 //! The window, the mpv bridge and networking live in the modules gated behind the `app` feature.
 pub mod addons;
+pub mod addon_kind;
 pub mod adblock;
 pub mod browser;
 pub mod anilist;

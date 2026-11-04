@@ -760,7 +760,10 @@ impl Core {
     }
 
     pub fn novel_close_reader(&mut self) {
-        self.novel_reader = None;
+        // the place reached is only written every few moves: closing must not lose it
+        if self.novel_reader.take().is_some() {
+            self.save_novels();
+        }
         self.novel_gen += 1;
         self.reader_changed();
     }

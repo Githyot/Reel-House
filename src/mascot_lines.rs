@@ -142,7 +142,7 @@ const GREET_AFTERNOON: &[Quip] = &[
     ("It's the perfect hour for a lesson. I checked. I'm a clock now.", "É a hora perfeita pra uma lição. Eu conferi. Agora sou um relógio.", "Es la hora perfecta para una lección. Lo comprobé. Ahora soy un reloj."),
     ("Coffee break? Word break! Same thing, fewer calories.", "Pausa pro café? Pausa pras palavras! Mesma coisa, menos calorias.", "¿Pausa para el café? ¡Pausa para palabras! Lo mismo, menos calorías."),
     ("Hi! I was just pretending to be busy. Let's actually be busy together.", "Oi! Eu estava só fingindo que estava ocupada. Vamos ficar ocupados de verdade juntos.", "¡Hola! Solo hacía como que trabajaba. Trabajemos de verdad juntos."),
-    ("Afternoon plot: the hero opens the app, sees the macaw, does a lesson. Great writing.", "Roteiro da tarde: o herói abre o app, vê a arara e faz uma lição. Que roteiro.", "Guion de la tarde: el héroe abre la app, ve al guacamayo y hace una lección. Qué guion."),
+    ("Afternoon plot: the hero opens the app, sees Arara, does a lesson. Great writing.", "Roteiro da tarde: o herói abre o app, vê a Arara e faz uma lição. Que roteiro.", "Guion de la tarde: el héroe abre la app, ve a Arara y hace una lección. Qué guion."),
     ("You came back! I knew you would. I also knew it would be around now. I'm psychic.", "Você voltou! Eu sabia. Também sabia que seria mais ou menos agora. Sou vidente.", "¡Volviste! Lo sabía. También sabía que sería más o menos ahora. Soy vidente."),
 ];
 
@@ -150,7 +150,7 @@ const GREET_EVENING: &[Quip] = &[
     ("Evening! The best episodes come after a quick lesson. That's science. Probably.", "Boa noite! Os melhores episódios vêm depois de uma lição rápida. É ciência. Provavelmente.", "¡Buenas noches! Los mejores episodios vienen después de una lección rápida. Es ciencia. Probablemente."),
     ("Dinner, a show and five minutes of study. The perfect combo.", "Jantar, uma série e cinco minutos de estudo. O combo perfeito.", "Cena, una serie y cinco minutos de estudio. El combo perfecto."),
     ("Long day? I'll keep it short. Like my attention span.", "Dia longo? Vou ser breve. Igual minha capacidade de atenção.", "¿Día largo? Seré breve. Como mi capacidad de atención."),
-    ("The sun is down, the macaw is up. As usual.", "O sol se pôs, e a arara continua acordada. Como sempre.", "Se puso el sol y el guacamayo sigue despierto. Como siempre."),
+    ("The sun is down, Arara is up. As usual.", "O sol se pôs, e a Arara continua acordada. Como sempre.", "Se puso el sol y Arara sigue despierta. Como siempre."),
     ("Evening plan: blanket, snacks, subtitles in the language you're learning. Fancy!", "Plano pra noite: coberta, petiscos e legenda no idioma que você está aprendendo. Chique!", "Plan de la noche: manta, snacks y subtítulos en el idioma que aprendes. ¡Qué nivel!"),
     ("Hey! Before the next episode: one tiny lesson? For me? I'm adorable.", "Ei! Antes do próximo episódio: uma liçãozinha? Por mim? Eu sou fofa.", "¡Oye! Antes del próximo episodio: ¿una leccioncita? ¿Por mí? Soy adorable."),
     ("Welcome home. I tidied up the flashcards. By tidied, I mean counted them nervously.", "Bem-vindo de volta. Arrumei os flashcards. Por arrumar, quero dizer que contei eles nervosa.", "Bienvenido. Ordené las flashcards. Por ordenar, quiero decir que las conté con nervios."),
@@ -172,7 +172,7 @@ const GREET_STREAK: &[Quip] = &[
     ("Welcome back, {n}-day legend. Don't let it go to your head. Okay, a little.", "Bem-vindo de volta, lenda de {n} dias. Não deixa subir à cabeça. Tá, só um pouquinho.", "Bienvenido de nuevo, leyenda de {n} días. Que no se te suba a la cabeza. Bueno, un poquito."),
     ("Day {n}. I told all the other macaws about you. They're jealous.", "Dia {n}. Contei de você pra todas as outras araras. Estão com inveja.", "Día {n}. Les hablé de ti a todos los otros guacamayos. Tienen envidia."),
     ("{n} days in a row! You're more consistent than my sleep schedule.", "{n} dias seguidos! Você é mais constante que meu horário de sono.", "¡{n} días seguidos! Eres más constante que mi horario de sueño."),
-    ("Streak: {n}. Macaw pride: over 9000.", "Ofensiva: {n}. Orgulho da arara: mais de 8000.", "Racha: {n}. Orgullo del guacamayo: más de 8000."),
+    ("Streak: {n}. Arara's pride: over 9000.", "Ofensiva: {n}. Orgulho da Arara: mais de 8000.", "Racha: {n}. Orgullo de Arara: más de 8000."),
     ("Episode {n} of \"The Unstoppable Learner\". The ratings are through the roof.", "Episódio {n} de \"O Estudante Imparável\". A audiência está nas alturas.", "Episodio {n} de \"El Estudiante Imparable\". La audiencia está por las nubes."),
     ("{n} days! Keep going and I'll need a bigger trophy shelf.", "{n} dias! Continua assim que vou precisar de uma estante de troféus maior.", "¡{n} días! Sigue así y necesitaré una estantería de trofeos más grande."),
 ];
@@ -256,7 +256,7 @@ const STUDY_HELLO: &[Quip] = &[
     ("Empty shelves make a sad macaw. Add a deck?", "Estante vazia deixa a arara triste. Adiciona um baralho?", "Estantes vacías ponen triste al guacamayo. ¿Agregas un mazo?"),
     ("I've been waiting here all day. No pressure. Lots of pressure.", "Estou esperando aqui o dia todo. Sem pressão. Muita pressão.", "Llevo todo el día esperando aquí. Sin presión. Mucha presión."),
     ("Every great collection starts with one deck. And one macaw.", "Toda grande coleção começa com um baralho. E uma arara.", "Toda gran colección empieza con un mazo. Y un guacamayo."),
-    ("New here? I'm the macaw. I'll be reminding you of things. Forever.", "Novo por aqui? Eu sou a arara. Vou te lembrar das coisas. Pra sempre.", "¿Nuevo por aquí? Soy el guacamayo. Te voy a recordar cosas. Para siempre."),
+    ("New here? I'm Arara. I'll be reminding you of things. Forever.", "Novo por aqui? Eu sou a Arara. Vou te lembrar das coisas. Pra sempre.", "¿Nuevo por aquí? Soy Arara. Te voy a recordar cosas. Para siempre."),
 ];
 
 const BUDDY_DONE: &[Quip] = &[
@@ -265,7 +265,7 @@ const BUDDY_DONE: &[Quip] = &[
     ("Reviews cleared! Your memory sends its regards.", "Revisões zeradas! Sua memória manda lembranças.", "¡Repasos terminados! Tu memoria te manda saludos."),
     ("Done for today. See you tomorrow. I'll be right here. Waiting. Lovingly.", "Pronto por hoje. Te vejo amanhã. Vou estar bem aqui. Esperando. Com carinho.", "Listo por hoy. Nos vemos mañana. Estaré aquí. Esperando. Con cariño."),
     ("Inbox zero, but for flashcards. Legendary.", "Caixa de entrada zerada, só que de flashcards. Lendário.", "Bandeja vacía, pero de flashcards. Legendario."),
-    ("The cards are defeated. The macaw is pleased.", "Os cartões foram derrotados. A arara está satisfeita.", "Las tarjetas fueron derrotadas. El guacamayo está satisfecho."),
+    ("The cards are defeated. Arara is pleased.", "Os cartões foram derrotados. A Arara está satisfeita.", "Las tarjetas fueron derrotadas. Arara está satisfecha."),
     ("Nothing left to review. Time for an episode. Or three. I won't tell.", "Nada pra revisar. Hora de um episódio. Ou três. Eu não conto pra ninguém.", "Nada que repasar. Hora de un episodio. O tres. No se lo diré a nadie."),
     ("That was quick! Were you speedrunning?", "Foi rápido! Estava fazendo speedrun?", "¡Qué rápido! ¿Hacías speedrun?"),
 ];

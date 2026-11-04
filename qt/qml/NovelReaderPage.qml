@@ -47,7 +47,7 @@ Rectangle {
     // A paragraph with swapped words as rich text: the word of the study language on a soft highlight, a link that
     // carries the original (and the reading) for the tooltip.
     function mixHtml(pieces, indent) {
-        const hl = Qt.rgba(Theme.c.accent.r, Theme.c.accent.g, Theme.c.accent.b, 0.22)
+        const hl = Qt.alpha(Theme.c.accent, 0.22)
         const bg = "#" + [hl.r, hl.g, hl.b].map(function(v) { return ("0" + Math.round(v * 255).toString(16)).slice(-2) }).join("")
         let h = " ".repeat(indent)
         for (let i = 0; i < pieces.length; ++i) {

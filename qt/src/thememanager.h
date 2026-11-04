@@ -36,7 +36,7 @@ class ThemeManager : public QObject {
     // switch on when they draw a platform's own control. A theme file sets `look`; without it the id is used.
     Q_PROPERTY(QString look READ look NOTIFY changed)
     // The theme of this device when the preferences name none: "hyperos" on a Xiaomi / Redmi / POCO phone (HyperOS),
-    // "android" on other Android phones, "ios" on an iPhone or iPad, "gnome" on a desktop. REELHOUSE_THEME overrides it.
+    // "android" on other Android phones, "apple" on an iPhone or iPad, "gnome" on a desktop. REELHOUSE_THEME overrides it.
     Q_PROPERTY(QString systemId READ systemId CONSTANT)
     // ---- mobile (Material 3 / iOS HIG on phones and tablets) ----
     // mobile: the pages lay themselves out for a phone (bottom navigation, full-screen dialogs, 44/48 px targets,
@@ -78,7 +78,7 @@ public:
     QVariantMap layout() const { return m_root.value("layout").toMap(); }
     QString look() const { const QString l = m_root.value("look").toString(); return l.isEmpty() ? m_id : l; }
     bool mobile() const { return m_mobile; }
-    void setMobile(bool m) { if (m_mobile != m) { m_mobile = m; emit mobileChanged(); } }
+    void setMobile(bool m);
     bool touch() const { return m_touch; }
     void setTouch(bool t) { if (m_touch != t) { m_touch = t; emit mobileChanged(); } }
     QVariantMap safe() const { return m_safe; }
@@ -97,8 +97,10 @@ private:
     static void retargetFonts(QQuickItem *item, const QString &from, const QStringList &to);
     QString m_id, m_scheme = "dark", m_systemId = "gnome";
     static QString detectSystemTheme();
+    static QString canonicalId(const QString &id);
+    void rebuild();
     QStringList m_available;
-    QVariantMap m_root, m_colors, m_type, m_mob, m_safe{{"top", 0}, {"bottom", 0}, {"left", 0}, {"right", 0}};
+    QVariantMap m_base, m_root, m_colors, m_type, m_mob, m_safe{{"top", 0}, {"bottom", 0}, {"left", 0}, {"right", 0}};
     bool m_mobile = false, m_touch = false;
     void pickMobile();
     QVariantList m_list;

@@ -11,8 +11,10 @@ Column {
     spacing: -2
     Row {
         spacing: 12
-        Text { text: row.title; color: Theme.c.text; font.pixelSize: Theme.type.rowTitle.size; font.weight: Theme.type.rowTitle.weight || Font.ExtraBold; font.letterSpacing: Theme.type.rowTitle.letterSpacing || 0; font.family: Theme.type.display || Theme.type.family }
-        Text { visible: row.addon !== ""; text: row.addon; color: Theme.c.textDim; font.pixelSize: 14; font.family: Theme.type.family; topPadding: 8 }
+        width: row.width
+        Text { id: rowTitle; width: Math.min(implicitWidth, row.width - (addonName.visible ? Math.min(addonName.implicitWidth, row.width * 0.4) + 12 : 0)); elide: Text.ElideRight; text: row.title; color: Theme.c.text; font.pixelSize: Theme.type.rowTitle.size; font.weight: Theme.type.rowTitle.weight || Font.ExtraBold; font.letterSpacing: Theme.type.rowTitle.letterSpacing || 0; font.family: Theme.type.display || Theme.type.family }
+        // the addon's name sits on the baseline of the title, as a caption of it
+        Text { id: addonName; visible: row.addon !== ""; anchors.baseline: rowTitle.baseline; width: Math.min(implicitWidth, row.width * 0.4); elide: Text.ElideRight; text: row.addon; color: Theme.c.textDim; font.pixelSize: 14; font.family: Theme.type.family }
     }
     HScrollList {
         id: list

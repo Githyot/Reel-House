@@ -49,7 +49,7 @@ static QString sysProp(const char *name) {
 // still gets the HyperOS look.
 QString ThemeManager::detectSystemTheme() {
     const QString forced = qEnvironmentVariable("REELHOUSE_THEME");
-    if (!forced.isEmpty() && QFile::exists(":/themes/" + forced + ".json")) return forced;
+    if (!forced.isEmpty() && QFile::exists(":/themes/" + canonicalId(forced) + ".json")) return canonicalId(forced);
 #ifdef Q_OS_ANDROID
     const QString hyper = sysProp("ro.mi.os.version.name");
     const QString maker = (sysProp("ro.product.manufacturer") + " " + sysProp("ro.product.brand")).toLower();
@@ -57,7 +57,7 @@ QString ThemeManager::detectSystemTheme() {
     qInfo() << "system theme: maker" << maker << "HyperOS" << (hyper.isEmpty() ? QStringLiteral("-") : hyper);
     return !hyper.isEmpty() || xiaomi ? QStringLiteral("hyperos") : QStringLiteral("android");
 #elif defined(Q_OS_IOS)
-    return QStringLiteral("ios");
+    return QStringLiteral("apple");
 #else
     return QStringLiteral("gnome");
 #endif
@@ -99,14 +99,47 @@ static QString firstInstalled(const QStringList &stack, const QString &fallback)
     return fallback;
 }
 
-bool ThemeManager::load(const QString &id) {
+// Ids of themes that were folded into another one: "ios" is now the phone side of "apple" (its `phone` group).
+QString ThemeManager::canonicalId(const QString &id) {
+    return id == QLatin1String("ios") ? QStringLiteral("apple") : id;
+}
+
+// `over` merged into `base` key by key (groups are merged, not replaced).
+static QVariantMap mergeMaps(QVariantMap base, const QVariantMap &over) {
+    for (auto it = over.constBegin(); it != over.constEnd(); ++it) {
+        if (it.value().typeId() == QMetaType::QVariantMap && base.value(it.key()).typeId() == QMetaType::QVariantMap)
+            base.insert(it.key(), mergeMaps(base.value(it.key()).toMap(), it.value().toMap()));
+        else
+            base.insert(it.key(), it.value());
+    }
+    return base;
+}
+
+void ThemeManager::setMobile(bool m) {
+    if (m_mobile == m) return;
+    m_mobile = m;
+    // a theme with a phone side (Apple: the iOS values) is laid out again when the window becomes a phone or a desktop
+    if (m_base.contains("phone")) rebuild();
+    emit mobileChanged();
+}
+
+bool ThemeManager::load(const QString &wanted) {
+    const QString id = canonicalId(wanted);
     QFile f(":/themes/" + id + ".json");
     if (!f.open(QIODevice::ReadOnly)) { qWarning() << "theme not found:" << id; return false; }
     QJsonParseError err;
     const auto doc = QJsonDocument::fromJson(f.readAll(), &err);
     if (!doc.isObject()) { qWarning() << "theme" << id << "is not valid JSON:" << err.errorString(); return false; }
-    m_root = doc.object().toVariantMap();
+    m_base = doc.object().toVariantMap();
     m_id = id;
+    rebuild();
+    return true;
+}
+
+// The theme as this device shows it: the file, with its `phone` group merged over it while Theme.mobile.
+void ThemeManager::rebuild() {
+    m_root = m_mobile && m_base.contains("phone") ? mergeMaps(m_base, m_base.value("phone").toMap()) : m_base;
+    m_root.remove("phone");
     const QString oldFamily = m_type.value("family").toString();
     m_type = m_root.value("typography").toMap();
     // family (UI text), display (large titles), mono (hashes, code) and serif (reading): the first installed font of
@@ -123,7 +156,6 @@ bool ThemeManager::load(const QString &id) {
     emit changed();
     applyAppFont(oldFamily);
     applyAppIcon();
-    return true;
 }
 
 // The mobile metrics: what the theme's `mobile` group says, over the defaults of its family (Material 3 for Android
@@ -219,7 +251,7 @@ void ThemeManager::pickColors() {
     fallback("outline", "border"); fallback("outlineVariant", "divider");
     fallback("inverseSurface", "text"); fallback("inverseOnSurface", "window");
     fallback("stateHover", "hover"); fallback("stateFocus", "selected"); fallback("statePressed", "selected");
-    // iOS roles (ios.json names them); the others map to their window / card / divider
+    // iOS roles (the phone side of apple.json names them); the others map to their window / card / divider
     fallback("groupedBg", "window"); fallback("groupedCard", "card"); fallback("separator", "divider");
     fallback("tabBar", "headerbar"); fallback("grabber", "textDim"); fallback("fab", "accent"); fallback("onFab", "accentFg");
     if (!m_colors.contains("glassHighlight")) m_colors.insert("glassHighlight", "#00ffffff");
@@ -248,12 +280,33 @@ void ThemeManager::pickColors() {
             const double a = lum(x), b = lum(y);
             return (std::max(a, b) + 0.05) / (std::min(a, b) + 0.05);
         };
-        const QColor bg(m_colors.value("accent").toString());
-        const QColor fg(m_colors.value("accentFg").toString());
-        if (bg.isValid() && (!fg.isValid() || contrast(fg, bg) < 3.0)) {
-            const QColor white(Qt::white), black(Qt::black);
-            m_colors.insert("accentFg", contrast(white, bg) >= contrast(black, bg) * 0.75 ? white.name() : black.name());
-        }
+        // The same rule for the text and icons on the status fills (a badge on the success colour, the error chip, a
+        // warning pill): white on the light greens/reds/yellows of the dark themes did not read. warningFg is new.
+        auto fgOn = [&](const char *fillKey, const char *fgKey) {
+            const QColor bg(m_colors.value(fillKey).toString());
+            const QColor fg(m_colors.value(fgKey).toString());
+            if (bg.isValid() && (!fg.isValid() || contrast(fg, bg) < 3.0)) {
+                const QColor white(Qt::white), black(Qt::black);
+                m_colors.insert(fgKey, contrast(white, bg) >= contrast(black, bg) * 0.75 ? white.name() : black.name());
+            }
+        };
+        fgOn("accent", "accentFg");
+        fgOn("success", "greenFg");
+        fgOn("error", "errorFg");
+        fgOn("warning", "warningFg");
+        // successText / warningText / errorText: the status colour as words on the window, darkened (light schemes)
+        // or lightened (dark ones) until it reads (4.5:1). The iOS orange on white was 2:1.
+        const QColor win(m_colors.value("window").toString());
+        auto textOf = [&](const char *key, const char *textKey) {
+            QColor c(m_colors.value(key).toString());
+            if (!c.isValid() || !win.isValid() || m_colors.contains(textKey)) return;
+            const bool lightBg = lum(win) > 0.4;
+            for (int i = 0; i < 16 && contrast(c, win) < 4.5; ++i) c = lightBg ? c.darker(110) : c.lighter(110);
+            m_colors.insert(textKey, c.name());
+        };
+        textOf("success", "successText");
+        textOf("warning", "warningText");
+        textOf("error", "errorText");
     }
     // Shades of the accent used by chips and highlights (GTK: alpha(@accent_bg_color, x)).
     const QColor acc(m_colors.value("accent").toString());
@@ -286,7 +339,7 @@ void ThemeManager::pickColors() {
         p.setColor(QPalette::Highlight, col("accent", "accent"));
         p.setColor(QPalette::HighlightedText, col("accentFg", "text"));
         p.setColor(QPalette::PlaceholderText, col("textDim", "text"));
-        p.setColor(QPalette::Dark, col("divider", "textDim"));
+        p.setColor(QPalette::Dark, col("textDim", "text"));   // BusyIndicator and ScrollBar handles: as in Main.qml
         p.setColor(QPalette::Mid, col("divider", "textDim"));
         s_ownPalette = true;   // our own change must not look like a desktop change (it would loop)
         QGuiApplication::setPalette(p);

@@ -830,7 +830,10 @@ void CEF_CALLBACK onBeforeCommandLine(cef_app_t *, const cef_string_t *processTy
     }
     // Chrome's own "Translate this page?", sign-in and first-run prompts have no window here; its AI models and
     // components (hundreds of MB in the profile) are not needed by these pages
-    swv("disable-features", QStringLiteral("Translate,MediaRouter,DialMediaRouteProvider,OptimizationGuideModelDownloading,OptimizationHintsFetching,OptimizationTargetPrediction,OptimizationHints"));
+    swv("disable-features", QStringLiteral("Translate,MediaRouter,DialMediaRouteProvider,OptimizationGuideModelDownloading,OptimizationHintsFetching,OptimizationTargetPrediction,OptimizationHints,BackForwardCache,SpareRendererForSitePerProcess"));
+    // Memory: pages left behind are not kept alive for the Back button (BackForwardCache), no spare page process is
+    // started ahead of time, and tabs of the same site share processes (at most 4 page processes; sites stay isolated)
+    swv("renderer-process-limit", QStringLiteral("4"));
     sw("disable-component-update");
     sw("no-first-run");
     sw("no-default-browser-check");

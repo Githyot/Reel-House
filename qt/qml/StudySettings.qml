@@ -123,10 +123,10 @@ Column {
 
     PrefGroup {
         visible: ss.on
-        title: ss.tr("The macaw in the player")
+        title: ss.tr("Arara in the player")
         PrefSwitch {
             first: true
-            title: ss.tr("The macaw helps while you watch")
+            title: ss.tr("Arara helps while you watch")
             subtitle: ss.tr("It brings the question cards, keeps quiet in a corner during the parts without subtitles and peeks at the learned words")
             checked: ss.yes("study_mascot_cues")
             onToggled: function(v) { ss.set("general.study_mascot_cues", v) }

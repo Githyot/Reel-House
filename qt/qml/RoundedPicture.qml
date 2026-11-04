@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Window
 import QtQuick.Effects
 import Reelhouse 1.0
 
@@ -24,7 +25,11 @@ Item {
         url: rp.url
         fallback: rp.fallback
         title: rp.title
-        sourceSize.width: Math.round(rp.width * (Theme.mobile ? 1.5 : 2))
+        // Decoded at the size the screen really draws (frame x the screen's pixel ratio), in steps of 32 px so a window
+        // being resized does not reload every cover. The provider also asks TMDB/Kitsu for their smaller file.
+        readonly property real dpr: Math.max(1, Screen.devicePixelRatio)
+        sourceSize.width: rp.width > 1 ? Math.ceil(rp.width * dpr / 32) * 32 : 0
+        sourceSize.height: rp.height > 1 ? Math.ceil(rp.height * dpr / 32) * 32 : 0
         layer.enabled: pic.status === Image.Ready
         layer.effect: MultiEffect {
             maskEnabled: true

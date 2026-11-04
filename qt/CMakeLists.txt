@@ -117,7 +117,6 @@ qt_add_resources(reelhouse-qt "app" PREFIX "/" FILES
     themes/apple.json
     themes/windows.json
     themes/android.json
-    themes/ios.json
     themes/hyperos.json
     icon/reelhouse-icon.png
     icon/reelhouse-round-512.png
@@ -210,6 +209,7 @@ qt_add_resources(reelhouse-qt "app" PREFIX "/" FILES
     qml/PadHints.qml
     qml/SoundVolumeBox.qml
     qml/PadKeyboard.qml
+    qml/PrefsAdvanced.qml
     qml/PrefsController.qml
     qml/PadNavigator.qml
     qml/PageCardPanel.qml

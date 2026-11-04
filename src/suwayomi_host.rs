@@ -321,6 +321,14 @@ pub fn java_args(jar: &Path, dirs: &Dirs, port: u16, repos: &[String]) -> Vec<St
     };
     let mut v = vec![
         "-Xmx768m".to_string(),
+        // Memory: a small server beside the app. The serial collector (no G1 bookkeeping, one GC thread), a heap that
+        // starts small and gives memory back after a collection, and a smaller JIT code cache. Every flag exists on
+        // Java 8 to 21+.
+        "-Xms32m".to_string(),
+        "-XX:+UseSerialGC".to_string(),
+        "-XX:MinHeapFreeRatio=10".to_string(),
+        "-XX:MaxHeapFreeRatio=30".to_string(),
+        "-XX:ReservedCodeCacheSize=64m".to_string(),
         // no window of its own, ever (tray icon, launcher, dialogs): the app is its only face
         "-Djava.awt.headless=true".to_string(),
         owner_mark(&dirs.root),

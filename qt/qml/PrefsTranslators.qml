@@ -82,110 +82,117 @@ Column {
     }
 
     // ---------- Compare: the same sentence with every translator ----------
-    PrefGroup {
-        title: tp.tt("Compare the translators")
-        description: tp.tt("Translates a sentence with every translator that is ready, all at the same time, and shows how long each took. Language:") + " " + (tp.tinfo.target || "")
-        PrefEntry {
-            title: tp.tt("Sentence to translate (empty: the example)")
-            text: tp.sampleText
-            onEdited: function(t) { tp.sampleText = t }
-        }
-        PrefButton {
-            title: tp.tt("Test all")
-            subtitle: "“" + (tp.sampleText.trim() !== "" ? tp.sampleText.trim() : (tp.tinfo.sample || "")) + "”"
-            label: tp.tt("Test all")
-            kind: "suggested"
-            onActivated: Core.cmd({cmd: "translator_test_all", text: tp.sampleText})
-        }
-        Repeater {
-            model: tp.tlist.length
-            delegate: PrefRow {
-                required property int index
-                readonly property var tk: tp.tlist[index] || ({})
-                visible: (tk.state || "") !== ""
-                title: tp.tt(tk.name) + (tk.via && tk.via !== tk.name ? " · " + tk.via : "")
-                subtitle: tp.resultLine(tk)
-                selectable: true
-                highlight: tk.state === "ok" && tk.ms === tp.fastest
-                // a bar as long as the time, on the scale of the slowest answer
-                Rectangle {
-                    anchors.verticalCenter: parent.verticalCenter
-                    visible: tk.state === "ok"
-                    width: 90
-                    height: 6
-                    radius: 3
-                    color: Theme.c.divider
-                    Rectangle { width: Math.max(4, parent.width * (tk.ms || 0) / tp.slowest); height: parent.height; radius: 3; color: Theme.c.accent }
-                }
-                Text {
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: 70
-                    horizontalAlignment: Text.AlignRight
-                    text: tk.state === "ok" ? tk.ms + " ms" : (tk.state === "error" ? tp.tt("Failed") : "…")
-                    color: tk.state === "error" ? Theme.c.error : Theme.c.textDim
-                    font.pixelSize: 13
-                    font.family: Theme.type.family
-                }
+    PrefsAdvanced { dlg: tp.dlg }
+    Column {
+        visible: tp.dlg ? tp.dlg.adv : false
+        width: parent.width
+        spacing: 26
+        PrefGroup {
+            title: tp.tt("Compare the translators")
+            description: tp.tt("Translates a sentence with every translator that is ready, all at the same time, and shows how long each took. Language:") + " " + (tp.tinfo.target || "")
+            PrefEntry {
+                title: tp.tt("Sentence to translate (empty: the example)")
+                text: tp.sampleText
+                onEdited: function(t) { tp.sampleText = t }
             }
-        }
-    }
-
-    // ---------- Every translator: state, keys, a test of its own ----------
-    PrefGroup {
-        title: tp.tt("Available translators")
-        Repeater {
-            model: tp.tlist.length
-            delegate: PrefRow {
-                required property int index
-                readonly property var tk: tp.tlist[index] || ({})
-                readonly property string used: tp.usedIn(tk.id)
-                title: tp.tt(tk.name) + " · " + (tk.free ? tp.tt("Free") : (tk.ready ? tp.tt("Key saved") : tp.tt("Needs a key")))
-                subtitle: tp.tt(tk.note || "") + (used !== "" ? "\n" + tp.tt("Used for:") + " " + used : "")
-                    + ((tk.state || "") !== "" ? "\n" + (tk.state === "ok" ? tk.ms + " ms: " : "") + tp.resultLine(tk) : "")
-                highlight: used !== ""
-                FlatButton {
-                    visible: tp.hasAccount(tk.id) || tk.id === "azure"
-                    anchors.verticalCenter: parent.verticalCenter
-                    kind: "flat"; glyph: "settings"; implicitWidth: 34; implicitHeight: 34
-                    ToolTip.visible: hovered; ToolTip.text: tp.tt("Server and key of the translator")
-                    onClicked: {
-                        if (tk.id === "azure") azureGroup.expanded = true
-                        else tp.dlg.openAccount(tk.id)
+            PrefButton {
+                title: tp.tt("Test all")
+                subtitle: "“" + (tp.sampleText.trim() !== "" ? tp.sampleText.trim() : (tp.tinfo.sample || "")) + "”"
+                label: tp.tt("Test all")
+                kind: "suggested"
+                onActivated: Core.cmd({cmd: "translator_test_all", text: tp.sampleText})
+            }
+            Repeater {
+                model: tp.tlist.length
+                delegate: PrefRow {
+                    required property int index
+                    readonly property var tk: tp.tlist[index] || ({})
+                    visible: (tk.state || "") !== ""
+                    title: tp.tt(tk.name) + (tk.via && tk.via !== tk.name ? " · " + tk.via : "")
+                    subtitle: tp.resultLine(tk)
+                    selectable: true
+                    highlight: tk.state === "ok" && tk.ms === tp.fastest
+                    // a bar as long as the time, on the scale of the slowest answer
+                    Rectangle {
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: tk.state === "ok"
+                        width: 90
+                        height: 6
+                        radius: 3
+                        color: Theme.c.divider
+                        Rectangle { width: Math.max(4, parent.width * (tk.ms || 0) / tp.slowest); height: parent.height; radius: 3; color: Theme.c.accent }
+                    }
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 70
+                        horizontalAlignment: Text.AlignRight
+                        text: tk.state === "ok" ? tk.ms + " ms" : (tk.state === "error" ? tp.tt("Failed") : "…")
+                        color: tk.state === "error" ? Theme.c.errorText : Theme.c.textDim
+                        font.pixelSize: 13
+                        font.family: Theme.type.family
                     }
                 }
-                FlatButton {
-                    anchors.verticalCenter: parent.verticalCenter
-                    kind: tk.ready ? "plain" : "flat"
-                    enabled: tk.ready && tk.state !== "running"
-                    text: tp.tt("Test")
-                    implicitHeight: 34
-                    onClicked: Core.cmd({cmd: "translator_test", id: tk.id, text: tp.sampleText})
+            }
+        }
+
+        // ---------- Every translator: state, keys, a test of its own ----------
+        PrefGroup {
+            title: tp.tt("Available translators")
+            Repeater {
+                model: tp.tlist.length
+                delegate: PrefRow {
+                    required property int index
+                    readonly property var tk: tp.tlist[index] || ({})
+                    readonly property string used: tp.usedIn(tk.id)
+                    title: tp.tt(tk.name) + " · " + (tk.free ? tp.tt("Free") : (tk.ready ? tp.tt("Key saved") : tp.tt("Needs a key")))
+                    subtitle: tp.tt(tk.note || "") + (used !== "" ? "\n" + tp.tt("Used for:") + " " + used : "")
+                        + ((tk.state || "") !== "" ? "\n" + (tk.state === "ok" ? tk.ms + " ms: " : "") + tp.resultLine(tk) : "")
+                    highlight: used !== ""
+                    FlatButton {
+                        visible: tp.hasAccount(tk.id) || tk.id === "azure"
+                        anchors.verticalCenter: parent.verticalCenter
+                        kind: "flat"; glyph: "settings"; implicitWidth: 34; implicitHeight: 34
+                        ToolTip.visible: hovered; ToolTip.text: tp.tt("Server and key of the translator")
+                        onClicked: {
+                            if (tk.id === "azure") azureGroup.expanded = true
+                            else tp.dlg.openAccount(tk.id)
+                        }
+                    }
+                    FlatButton {
+                        anchors.verticalCenter: parent.verticalCenter
+                        kind: tk.ready ? "plain" : "flat"
+                        enabled: tk.ready && tk.state !== "running"
+                        text: tp.tt("Test")
+                        implicitHeight: 34
+                        onClicked: Core.cmd({cmd: "translator_test", id: tk.id, text: tp.sampleText})
+                    }
                 }
             }
         }
-    }
 
-    // ---------- Microsoft Translator (Azure) ----------
-    PrefGroup {
-        id: azureGroup
-        title: "Microsoft Translator (Azure)"
-        collapsible: true
-        expanded: (tp.tc.azure_key || "") === ""
-        description: tp.tt("Create a Translator resource in the Azure portal (the free F0 tier gives 2 million characters a month), then copy one of its keys and its region from “Keys and Endpoint”.")
-        PrefEntry { title: tp.tt("Key"); password: true; text: tp.tc.azure_key || ""; onEdited: function(t) { tp.dlg.set("translate.azure_key", t.trim()) } }
-        PrefEntry { first: false; title: tp.tt("Region (for example westeurope; empty for a global resource)"); text: tp.tc.azure_region || ""; onEdited: function(t) { tp.dlg.set("translate.azure_region", t.trim()) } }
-        PrefEntry { first: false; title: tp.tt("Address (optional, only for a resource with its own address)"); text: tp.tc.azure_endpoint || ""; onEdited: function(t) { tp.dlg.set("translate.azure_endpoint", t.trim()) } }
-        PrefButton { title: tp.tt("Get a key"); subtitle: "portal.azure.com"; label: tp.tt("Open"); onActivated: Qt.openUrlExternally("https://portal.azure.com/#create/Microsoft.CognitiveServicesTextTranslation") }
-        PrefButton {
-            title: tp.tt("Test the translator")
-            subtitle: {
-                const a = tp.tlist.find(function(t) { return t.id === "azure" })
-                return a && (a.state || "") !== "" ? (a.state === "ok" ? a.ms + " ms: " : "") + tp.resultLine(a) : ""
+        // ---------- Microsoft Translator (Azure) ----------
+        PrefGroup {
+            id: azureGroup
+            title: "Microsoft Translator (Azure)"
+            collapsible: true
+            expanded: (tp.tc.azure_key || "") === ""
+            description: tp.tt("Create a Translator resource in the Azure portal (the free F0 tier gives 2 million characters a month), then copy one of its keys and its region from “Keys and Endpoint”.")
+            PrefEntry { title: tp.tt("Key"); password: true; text: tp.tc.azure_key || ""; onEdited: function(t) { tp.dlg.set("translate.azure_key", t.trim()) } }
+            PrefEntry { first: false; title: tp.tt("Region (for example westeurope; empty for a global resource)"); text: tp.tc.azure_region || ""; onEdited: function(t) { tp.dlg.set("translate.azure_region", t.trim()) } }
+            PrefEntry { first: false; title: tp.tt("Address (optional, only for a resource with its own address)"); text: tp.tc.azure_endpoint || ""; onEdited: function(t) { tp.dlg.set("translate.azure_endpoint", t.trim()) } }
+            PrefButton { title: tp.tt("Get a key"); subtitle: "portal.azure.com"; label: tp.tt("Open"); onActivated: Qt.openUrlExternally("https://portal.azure.com/#create/Microsoft.CognitiveServicesTextTranslation") }
+            PrefButton {
+                title: tp.tt("Test the translator")
+                subtitle: {
+                    const a = tp.tlist.find(function(t) { return t.id === "azure" })
+                    return a && (a.state || "") !== "" ? (a.state === "ok" ? a.ms + " ms: " : "") + tp.resultLine(a) : ""
+                }
+                label: tp.tt("Test")
+                kind: "suggested"
+                onActivated: Core.cmd({cmd: "translator_test", id: "azure", text: tp.sampleText})
             }
-            label: tp.tt("Test")
-            kind: "suggested"
-            onActivated: Core.cmd({cmd: "translator_test", id: "azure", text: tp.sampleText})
         }
+
     }
 
 }

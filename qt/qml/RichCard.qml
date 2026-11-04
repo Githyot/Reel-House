@@ -11,7 +11,7 @@ Item {
     Keys.onEnterPressed: rc.clicked()
     Keys.onSpacePressed: rc.clicked()
     implicitHeight: Math.max(180, col.implicitHeight) + 16
-    Rectangle { anchors.fill: parent; radius: 12; color: area.containsMouse || rc.activeFocus ? Theme.c.cardHover : "transparent"; border.width: rc.activeFocus ? 3 : 0; border.color: Theme.c.accent }
+    Rectangle { anchors.fill: parent; radius: Theme.shape.card || 12; color: area.containsMouse || rc.activeFocus ? Theme.c.cardHover : "transparent"; border.width: rc.activeFocus ? 3 : 0; border.color: Theme.c.accent }
     RoundedPicture {
         id: cover
         x: 8

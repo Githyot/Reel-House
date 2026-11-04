@@ -87,7 +87,7 @@ Item {
 
     Rectangle {
         anchors.fill: parent
-        radius: 16
+        radius: Theme.shape.card
         color: Theme.c.card
         border.width: 2
         border.color: Theme.c.border
@@ -114,7 +114,7 @@ Item {
             const ctx = getContext("2d")
             ctx.reset()
             ctx.clearRect(0, 0, width, height)
-            ctx.fillStyle = Qt.rgba(Theme.c.text.r, Theme.c.text.g, Theme.c.text.b, 0.16)
+            ctx.fillStyle = Qt.alpha(Theme.c.text, 0.16)
             const px = Math.round(Math.min(width, height) * (kt.kana.length > 1 ? 0.48 : 0.74))
             ctx.font = px + "px \"" + (Theme.type.family || "sans-serif") + "\""
             ctx.textAlign = "center"

@@ -149,7 +149,7 @@ Column {
         width: parent.width
         wrapMode: Text.Wrap
         text: jc.tr("No reading for this sentence: look a word up to get one.")
-        color: Theme.c.warning
+        color: Theme.c.warningText
         font.pixelSize: 13
         font.family: Theme.type.family
     }

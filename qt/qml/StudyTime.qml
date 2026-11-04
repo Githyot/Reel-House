@@ -157,7 +157,7 @@ Item {
                             Text {
                                 anchors.horizontalCenter: parent.horizontalCenter
                                 text: tile.modelData.v
-                                color: tile.index === 4 ? Theme.c.warning : (tile.modelData.p === tp.period && tp.offset === 0 ? Theme.c.accentText : Theme.c.text)
+                                color: tile.index === 4 ? Theme.c.warningText : (tile.modelData.p === tp.period && tp.offset === 0 ? Theme.c.accentText : Theme.c.text)
                                 font.pixelSize: 24; font.weight: Font.Bold; font.family: Theme.type.family
                             }
                             Text { anchors.horizontalCenter: parent.horizontalCenter; text: tile.modelData.t; color: Theme.c.textDim; font.pixelSize: 12; font.family: Theme.type.family }
@@ -226,7 +226,7 @@ Item {
                                 width: parent.width
                                 wrapMode: Text.Wrap
                                 text: tp.dur(tp.v.total) + "  ·  " + (tp.v.change === null || tp.v.change === undefined ? tp.tr("nothing to compare with") : ((tp.v.change > 0 ? "+" : "") + tp.v.change + "% " + tp.compareText()))
-                                color: tp.v.change > 0 ? Theme.c.success : (tp.v.change < 0 ? Theme.c.error : Theme.c.textDim)
+                                color: tp.v.change > 0 ? Theme.c.successText : (tp.v.change < 0 ? Theme.c.errorText : Theme.c.textDim)
                                 font.pixelSize: 14; font.family: Theme.type.family
                             }
                         }

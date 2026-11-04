@@ -69,6 +69,14 @@ pub fn resource_url(addon_url: &str, resource: &str, kind: &str, id: &str, extra
         s.push_str(&extra.iter().map(|(k, v)| format!("{}={}", url_encode(k), url_encode(v))).collect::<Vec<_>>().join("&"));
     }
     s.push_str(".json");
+    // a manifest link with settings in its query (`manifest.json?token=…`): every request carries them too, as
+    // Stremio does (it swaps only the `/manifest.json` part of the link)
+    if let Some(i) = addon_url.find('?') {
+        let q = addon_url[i..].split('#').next().unwrap_or("");
+        if q.len() > 1 {
+            s.push_str(q);
+        }
+    }
     s
 }
 
@@ -115,7 +123,9 @@ pub fn needs_setup(url: &str, m: &Json) -> bool {
     }
     let base = base_of(url);
     let after_scheme = base.split("://").nth(1).unwrap_or(&base);
-    !after_scheme.contains('/')
+    // settings may also ride in the query (`manifest.json?config=…`)
+    let query = url.split_once('?').map(|(_, q)| q.split('#').next().unwrap_or("")).unwrap_or("");
+    !after_scheme.contains('/') && query.is_empty()
 }
 
 pub const NEEDS_SETUP: &str = "This addon has to be set up on its own page first. Open its link in a browser with /configure in place of /manifest.json, pick the options (some ask for a free API key) and paste here the manifest link that page gives you.";
@@ -394,6 +404,7 @@ mod tests {
         let a = "https://h.com/cfg/manifest.json";
         assert_eq!(resource_url(a, "stream", "series", "tt1:1:2", &[]), "https://h.com/cfg/stream/series/tt1:1:2.json");
         assert_eq!(resource_url(a, "catalog", "movie", "top", &[("search", "a b&c")]), "https://h.com/cfg/catalog/movie/top/search=a%20b%26c.json");
+        assert_eq!(resource_url("https://h.com/manifest.json?key=1", "stream", "movie", "tt1", &[]), "https://h.com/stream/movie/tt1.json?key=1");
     }
 
     #[test]

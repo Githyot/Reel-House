@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import Reelhouse 1.0
 
 Item {
@@ -38,7 +39,7 @@ Item {
         radius: Theme.shape.poster + 6
         color: "transparent"
         border.width: 6
-        border.color: Qt.rgba(Theme.c.accent.r, Theme.c.accent.g, Theme.c.accent.b, 0.3)
+        border.color: Qt.alpha(Theme.c.accent, 0.3)
     }
     // No picture: the name on the cover (GTK cover_titled).
     Text {

@@ -291,6 +291,13 @@ impl Core {
         READER_GEN.fetch_add(1, Ordering::SeqCst);
         self.reader_translations.clear();
         self.reader_tr_progress.clear();
+        // The text read on the pages and the upscaled files of the chapter that was left: both are kept on the disk
+        // (asked again, they come back at once), and kept here they made the reader state grow with every chapter.
+        self.reader_text.clear();
+        self.reader_upscaled.clear();
+        if let Some(m) = PAGE_KNOWN.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+            m.clear();
+        }
     }
 
     pub(super) fn on_translate_progress(&mut self, gen: u64, id: u64, done: usize, total: usize) {
