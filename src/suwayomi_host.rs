@@ -312,8 +312,23 @@ pub fn java_args(jar: &Path, dirs: &Dirs, port: u16, repos: &[String]) -> Vec<St
         }
     };
     let p = |k: &str, v: &str| format!("-Dsuwayomi.tachidesk.config.server.{}={}", k, v);
-    vec![
+    // IP protection (src/privacy.rs): the extensions' requests go through the local gateway (SOCKS5)
+    let gw = crate::privacy::proxy_port();
+    let socks: Vec<String> = if gw != 0 {
+        vec![p("socksProxyEnabled", "true"), p("socksProxyVersion", "5"), p("socksProxyHost", "127.0.0.1"), p("socksProxyPort", &gw.to_string())]
+    } else {
+        vec![p("socksProxyEnabled", "false")]
+    };
+    let mut v = vec![
         "-Xmx768m".to_string(),
+        // Memory: a small server beside the app. The serial collector (no G1 bookkeeping, one GC thread), a heap that
+        // starts small and gives memory back after a collection, and a smaller JIT code cache. Every flag exists on
+        // Java 8 to 21+.
+        "-Xms32m".to_string(),
+        "-XX:+UseSerialGC".to_string(),
+        "-XX:MinHeapFreeRatio=10".to_string(),
+        "-XX:MaxHeapFreeRatio=30".to_string(),
+        "-XX:ReservedCodeCacheSize=64m".to_string(),
         // no window of its own, ever (tray icon, launcher, dialogs): the app is its only face
         "-Djava.awt.headless=true".to_string(),
         owner_mark(&dirs.root),
@@ -330,9 +345,11 @@ pub fn java_args(jar: &Path, dirs: &Dirs, port: u16, repos: &[String]) -> Vec<St
         p("debugLogsEnabled", "false"),
         // The repositories are also given at start, in case the server does not take them later through its API.
         p("extensionRepos", &format!("[{}]", repos.iter().map(|r| format!("\"{}\"", r)).collect::<Vec<_>>().join(","))),
-        "-jar".to_string(),
-        show(jar),
-    ]
+    ];
+    v.extend(socks);
+    v.push("-jar".to_string());
+    v.push(show(jar));
+    v
 }
 
 fn pid_path(dir: &Path) -> PathBuf {

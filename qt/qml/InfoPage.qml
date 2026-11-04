@@ -42,7 +42,7 @@ Item {
                     visible: text !== ""
                     text: page.mal.loading === true ? Core.tr(Core.uiLang, "Looking this title up on MyAnimeList…")
                         : (page.mal.notFound === true ? Core.tr(Core.uiLang, "This title was not found on MyAnimeList. Add a TMDB key in Preferences (Metadata) to load movie and series details. Here is what the catalog knows.") : (page.mal.error ? page.mal.error : ""))
-                    color: page.mal.error && page.mal.loading !== true && page.mal.notFound !== true ? Theme.c.error : Theme.c.textDim
+                    color: page.mal.error && page.mal.loading !== true && page.mal.notFound !== true ? Theme.c.errorText : Theme.c.textDim
                     font.pixelSize: 15
                     font.family: Theme.type.family
                 }
@@ -147,7 +147,7 @@ Item {
                     visible: page.mal.logged === true
                     width: parent.width
                     height: 3 * 54
-                    radius: 12
+                    radius: Theme.shape.card
                     color: Theme.c.card
                     border.width: 1
                     border.color: Theme.c.divider

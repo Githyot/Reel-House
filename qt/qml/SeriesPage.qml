@@ -96,6 +96,8 @@ Rectangle {
             height: coverWall.height + 186
             verticalAlignment: Image.AlignVCenter
             url: sp.s.cover || ""
+            // blurred to a wash of colour: a quarter of the drawn size is plenty (and a quarter of the memory squared)
+            sourceSize.width: width > 1 ? Math.ceil(width / 4 / 32) * 32 : 0
             layer.enabled: coverWall.visible
             layer.effect: MultiEffect { blurEnabled: true; blur: 1.0; blurMax: 64 }
         }
@@ -274,7 +276,7 @@ Rectangle {
                 FlatButton { visible: !sp.isManga && !!v.own; anchors.right: parent.right; kind: "plain"; implicitHeight: 32; glyph: "plus"; text: sp.tr("Add chapter"); onClicked: addPrompt.open() }
             }
             BusyIndicator { visible: !!v.loading; running: visible; anchors.horizontalCenter: parent.horizontalCenter; width: 36; height: 36 }
-            Lbl { visible: !!v.error; width: parent.width; text: Core.tr(Core.uiLang, v.error || ""); color: Theme.c.error; wrapMode: Text.Wrap }
+            Lbl { visible: !!v.error; width: parent.width; text: Core.tr(Core.uiLang, v.error || ""); color: Theme.c.errorText; wrapMode: Text.Wrap }
             Lbl { visible: sp.unreachable && sp.retries < 20; width: parent.width; dim: true; text: sp.tr("Trying again…") }
             StatusPage {
                 visible: !v.loading && !v.error && sp.chapters.length === 0

@@ -1069,7 +1069,7 @@ fn state_prefs(c: &Core) -> Json {
     let mut j = c.settings.to_json();
     j.set("uiLang", s(&c.ui_lang()));
     let st = reelhouse::anime4k::status(&c.rt.shaders_dir);
-    let addons: Vec<Json> = c.settings.addons.iter().map(|a| Json::obj(vec![("url", s(&a.url)), ("name", s(&a.name())), ("enabled", Json::Bool(a.enabled))])).collect();
+    let addons: Vec<Json> = c.settings.addons.iter().map(|a| Json::obj(vec![("url", s(&a.url)), ("name", s(&a.name())), ("enabled", Json::Bool(a.enabled)), ("needsSetup", Json::Bool(a.needs_setup()))])).collect();
     j.set(
         "extra",
         Json::obj(vec![
@@ -1595,6 +1595,7 @@ fn event_json(e: Event) -> Option<Json> {
         Event::Restored => plain("restored"),
         Event::Profiles => plain("profiles"),
         Event::OpenUrl(u) => Some(Json::obj(vec![("e", s("open_url")), ("url", Json::Str(u))])),
+        Event::InstallApk(p) => Some(Json::obj(vec![("e", s("install_apk")), ("path", Json::Str(p))])),
         // a line for reelhouse-qt.log (the `[live]` lines of Gemini Live)
         Event::Log(text) => Some(Json::obj(vec![("e", s("log")), ("text", Json::Str(text))])),
         Event::LensFrame(token, r, ms) => {
@@ -1631,6 +1632,15 @@ fn run_cmd(b: &Bridge, j: &Json) -> Json {
             "load_home" => c.load_home(),
             // the "Offline mode" switch: the app uses only what is on disk, even with a connection
             "offline_mode" => c.set_offline_mode(j.get("on").as_bool().unwrap_or(false)),
+            // ---- IP protection (controller_privacy.rs, src/privacy.rs) ----
+            // {mode?: off|proxy|wireguard|tor|system, proxy_url?, wg_conf?, wg_name?, torrent_over_tor?}
+            "privacy_set" => c.privacy_set(j),
+            // {path}: a WireGuard .conf the user picked
+            "privacy_wg_file" => c.privacy_wg_file(&j.get("path").str(), j.get("copied").as_bool().unwrap_or(false)),
+            // which address the internet sees now
+            "privacy_check" => c.privacy_check(),
+            // a free Cloudflare WARP tunnel, made on the user's press
+            "privacy_warp" => c.privacy_warp(),
             // ---- study time and the Pomodoro (controller_time.rs); `tz` = minutes east of UTC ----
             // a timing line from the QML (e.g. "[study] opened in N ms") for the debug report
             "perf_log" => reelhouse::debug::log(&j.get("what").str(), &j.get("msg").str()),
@@ -2248,6 +2258,9 @@ fn run_cmd(b: &Bridge, j: &Json) -> Json {
                 if j.get("path").str().starts_with("upscaling.") && c.session.is_some() {
                     c.apply_upscaling_now();
                 }
+                if j.get("path").str() == "general.cache_limit_gb" {
+                    c.dl_enforce_limit();
+                }
             }
             "toggle_addon" => {
                 let url = j.get("url").str();
@@ -2259,6 +2272,7 @@ fn run_cmd(b: &Bridge, j: &Json) -> Json {
                 c.load_home();
             }
             "install_addon" => c.install_addon(&j.get("url").str()),
+            "add_any_addon" => c.add_any_addon(&j.get("url").str(), &j.get("kind").str()),
             "remove_addon" => c.remove_addon(&j.get("url").str()),
             "test_real_debrid" => c.test_real_debrid(),
             "anime_skip_login" => c.anime_skip_login(&j.get("email").str(), &j.get("password").str()),
@@ -2408,6 +2422,8 @@ unsafe fn text<'a>(p: *const c_char) -> &'a str {
 #[no_mangle]
 pub extern "C" fn rh_new() -> *mut Bridge {
     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // IP protection first (src/privacy.rs): nothing may go out before its gateway is chosen
+        reelhouse::privacy::init();
         let core = Core::new();
         core.fire_hook("onStart", Json::obj(vec![("version", s(env!("CARGO_PKG_VERSION")))]));
         Box::into_raw(Box::new(Bridge { core: Mutex::new(SendCore(core)), mpv: Mutex::new(None), frame_cb: Mutex::new(None), next: Mutex::new(None), started: std::time::Instant::now(), last_minute: Mutex::new(None), last_stats: Mutex::new(None), first_check_done: std::sync::atomic::AtomicBool::new(false), forward: Mutex::new(None), trail: Mutex::new(Vec::new()) }))
@@ -2554,6 +2570,16 @@ pub unsafe extern "C" fn rh_poll(b: *mut Bridge) -> *mut c_char {
             }
             events.push(net_json("net"));
         }
+        // IP protection changed (mode, tunnel up or down, address checked): the window and Qt's proxy follow, the
+        // torrent engine and Suwayomi start again with the new options (controller_privacy.rs)
+        static PRIVACY_SEEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(u64::MAX);
+        let pgen = reelhouse::privacy::generation();
+        if PRIVACY_SEEN.swap(pgen, std::sync::atomic::Ordering::Relaxed) != pgen {
+            c.on_privacy_change();
+            let mut j = reelhouse::privacy::state_json();
+            j.set("e", s("privacy"));
+            events.push(j);
+        }
         Json::obj(vec![("events", Json::Arr(events)), ("playing", Json::Bool(c.session.is_some()))])
     }));
     out(r.unwrap_or_else(|_| Json::obj(vec![("events", Json::Arr(vec![]))])))
@@ -2573,6 +2599,10 @@ pub unsafe extern "C" fn rh_state(b: *mut Bridge, name: *const c_char) -> *mut c
         // "net": is there internet, and did the user choose the offline mode ({online, network, forced})
         if name == "net" {
             return net_json("");
+        }
+        // IP protection (src/privacy.rs): mode, tunnel state, the address seen, the gateway port for Qt
+        if name == "privacy" {
+            return reelhouse::privacy::state_json();
         }
         let mut guard = match b.core.lock() {
             Ok(g) => g,
@@ -3372,6 +3402,13 @@ mod pad {
 /// What this build of the core can do where it runs (see `reelhouse::platform::caps`): JSON such as
 /// `{"os":"android","mobile":true,"localProcesses":false,...}`. The `Platform` singleton of QML reads it.
 /// Release with `rh_free_str`.
+/// The port of IP protection's local gateway when the app's traffic must go through it, else 0: Qt sets it as
+/// the application's SOCKS5 proxy (pictures, QML), the research browser as its proxy server.
+#[no_mangle]
+pub extern "C" fn rh_privacy_port() -> c_int {
+    reelhouse::privacy::qt_port() as c_int
+}
+
 #[no_mangle]
 pub extern "C" fn rh_platform_caps() -> *mut c_char {
     let out = std::panic::catch_unwind(|| reelhouse::platform::caps().dump()).unwrap_or_else(|_| "{}".to_string());

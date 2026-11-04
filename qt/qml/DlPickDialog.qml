@@ -104,7 +104,7 @@ Popup {
                 }
                 Repeater {
                     model: (dlg.d.errors !== undefined ? dlg.d.errors : []).slice(0, 4)
-                    delegate: Text { required property var modelData; width: col.width; wrapMode: Text.Wrap; text: modelData; color: Theme.c.error; font.pixelSize: 13; font.family: Theme.type.family }
+                    delegate: Text { required property var modelData; width: col.width; wrapMode: Text.Wrap; text: modelData; color: Theme.c.errorText; font.pixelSize: 13; font.family: Theme.type.family }
                 }
             }
         }

@@ -422,7 +422,7 @@ pub fn blocks(html: &str) -> Vec<Block> {
             }
             "script" | "style" if !closing => {
                 let end = format!("</{}", name);
-                let low = rest.to_lowercase();
+                let low = rest.to_ascii_lowercase();
                 rest = low.find(&end).and_then(|e| rest[e..].find('>').map(|g| &rest[e + g + 1..])).unwrap_or("");
             }
             "p" | "div" | "br" | "li" | "tr" | "blockquote" | "hr" | "section" | "article" | "ul" | "ol" | "table" => flush(&mut cur, &mut heading, &mut out),

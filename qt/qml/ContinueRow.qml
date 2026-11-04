@@ -61,7 +61,7 @@ Column {
                 width: 58
                 height: 58
                 radius: 29
-                color: area.containsMouse ? Qt.rgba(Theme.c.accent.r, Theme.c.accent.g, Theme.c.accent.b, 0.85) : "#8c000000"
+                color: area.containsMouse ? Qt.alpha(Theme.c.accent, 0.85) : "#8c000000"
                 scale: area.containsMouse ? 1.18 : 1
                 Behavior on scale { NumberAnimation { duration: Theme.motion.fast; easing.type: Easing.OutCubic } }
                 Behavior on color { ColorAnimation { duration: Theme.motion.fast } }

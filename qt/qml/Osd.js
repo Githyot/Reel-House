@@ -77,8 +77,12 @@ function t(ps) { return T[ps] || T.adw }
 function r(radius, h) { return Math.min(radius, h / 2) }
 
 // The accent as text / an icon on the dark panels: a dark accent (light app themes) is mixed with white until it reads.
+// Theme.c holds the colours as "#rrggbb" text (ThemeManager), so text is turned into a colour first: reading .r/.g/.b of
+// a string gave NaN and the "readable" accent came out black on the black panel.
 function readable(c) {
     if (!c) return "#ffffff"
+    if (typeof c === "string") c = Qt.lighter(c, 1.0)
+    if (isNaN(c.r) || isNaN(c.g) || isNaN(c.b)) return "#ffffff"
     var lum = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
     if (lum >= 0.42) return c
     var k = Math.min(0.6, (0.42 - lum) * 1.6 + 0.2)

@@ -7,6 +7,9 @@ import Reelhouse 1.0
 Column {
     id: tp
     readonly property var t: Core.torrents
+    // the general settings (PrefsDialog passes them)
+    property var g: ({})
+    function set(path, value) { Core.cmd({cmd: "set_setting", path: path, value: value}) }
     readonly property var groups: t.groups !== undefined ? t.groups : []
     property bool savedView: true
     property var openGroups: []
@@ -38,6 +41,28 @@ Column {
                 ToolTip.text: Core.tr(Core.uiLang, "Deletes the streaming cache. What you chose to keep stays.")
                 onClicked: Core.cmd({cmd: "clear_torrent_cache"})
             }
+        }
+    }
+
+    // What stays on disk: episodes go once watched, and the folder never passes the chosen size.
+    PrefGroup {
+        title: Core.tr(Core.uiLang, "Space limit")
+        description: Core.tr(Core.uiLang, "When the folder passes the limit, the streaming cache goes first (oldest first), then the oldest saved torrents. What is playing or downloading stays.")
+        PrefSwitch {
+            title: Core.tr(Core.uiLang, "Delete episodes once watched")
+            subtitle: Core.tr(Core.uiLang, "The file of an episode is deleted from the disk when you finish watching it (streamed or saved). Your own files are never touched.")
+            checked: tp.g.delete_watched !== false
+            onToggled: function(on) { tp.set("general.delete_watched", on) }
+        }
+        PrefSpin {
+            first: false
+            title: Core.tr(Core.uiLang, "Space for downloads (GB)")
+            subtitle: (tp.g.cache_limit_gb || 0) > 0 ? Core.tr(Core.uiLang, "In use") + ": " + (tp.t.total || "0 B") : Core.tr(Core.uiLang, "0 = no limit")
+            from: 0
+            to: 2000
+            step: 1
+            value: tp.g.cache_limit_gb || 0
+            onMoved: function(v) { tp.set("general.cache_limit_gb", Math.round(v)) }
         }
     }
 

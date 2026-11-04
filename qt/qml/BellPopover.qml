@@ -101,7 +101,7 @@ Popover {
                             visible: row.banner
                             x: 6; anchors.verticalCenter: parent.verticalCenter
                             width: 44; height: 44; radius: 22
-                            color: Qt.rgba(Theme.c.accent.r, Theme.c.accent.g, Theme.c.accent.b, 0.14)
+                            color: Qt.alpha(Theme.c.accent, 0.14)
                             Mascot { anchors.centerIn: parent; size: 38; mood: row.n.mood || "idle"; animate: false }
                         }
                         Column {

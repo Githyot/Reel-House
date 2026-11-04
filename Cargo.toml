@@ -17,15 +17,18 @@ default = ["app", "js", "webp", "desktop"]
 # parts answer with a clear message instead (see src/platform.rs). The Android and iOS targets turn `mobile` on by
 # themselves (build.rs sets the `reelhouse_mobile` cfg), so a mobile build needs no feature flag beyond
 # `--no-default-features --features "app js webp mobile"`.
-desktop = ["dep:adblock"]
-mobile = []
+desktop = ["dep:adblock", "privacy"]
+mobile = ["privacy"]
+# IP protection (src/privacy.rs): a local gateway that sends the app's traffic through the user's proxy, a WireGuard
+# tunnel run inside the app (no admin rights, works on Android) or the Tor network (Arti, inside the app).
+privacy = ["dep:tokio", "dep:tokio-wireguard", "dep:ipnet", "dep:futures-core", "dep:libc", "dep:arti-client", "dep:tor-rtcompat", "dep:liblzma-sys", "tokio/time", "tokio/io-util", "tokio/sync", "tokio/macros"]
 # The torrent engine (librqbit) inside the app instead of the rqbit program: for Android, which cannot start helper
 # programs. It serves the same HTTP API on 127.0.0.1, so the rest of the code talks to it exactly like to rqbit.
-torrent-embed = ["dep:librqbit", "dep:librqbit-dualstack-sockets", "dep:tokio"]
+torrent-embed = ["dep:librqbit", "dep:librqbit-dualstack-sockets", "dep:tokio", "tokio/macros", "tokio/sync"]
 # QuickJS bindings made on the build machine (libclang needed) for targets rquickjs ships none for, such as Android.
 js-bindgen = ["js", "rquickjs?/bindgen"]
 # mpv bridge, networking and the app logic
-app = ["dep:ureq", "dep:libloading", "dep:ruzstd", "dep:tungstenite", "dep:flate2"]
+app = ["dep:ureq", "dep:libloading", "dep:ruzstd", "dep:tungstenite", "dep:flate2", "dep:sha2"]
 # Pages and covers kept on disk as WebP: JPEG / PNG decoded in Rust, encoded lossy by libwebp.
 webp = ["dep:png", "dep:jpeg-decoder", "dep:libwebp"]
 # The JavaScript engine (QuickJS) that runs the Text mode plugins. Needs a C compiler.
@@ -39,6 +42,8 @@ regex = "1"
 ureq = { version = "2.10", optional = true }
 # gzip (already built for ureq and png): the Anime4K shaders archive is unpacked inside the app, Android has no `tar`.
 flate2 = { version = "1", optional = true }
+# SHA-256 of a downloaded update, checked against the digest GitHub publishes for the release file (update_delta.rs).
+sha2 = { version = "0.10", optional = true }
 # Research mode's ad blocker (Brave's adblock-rust, MPL-2.0): EasyList / EasyPrivacy / uBlock filters matching.
 # Without "single-thread" so the engine can be read from Chromium's network thread.
 adblock = { version = "0.13", optional = true, default-features = false, features = ["embedded-domain-resolver", "full-regex-handling"] }
@@ -48,6 +53,18 @@ libloading = { version = "0.8", optional = true }
 librqbit = { version = "9.1", optional = true, default-features = false, features = ["http-api", "tracing-subscriber-utils", "rust-tls"] }
 librqbit-dualstack-sockets = { version = "0.7", optional = true }
 tokio = { version = "1", optional = true, features = ["rt-multi-thread", "net"] }
+# WireGuard inside the app (boringtun + smoltcp, MIT/Apache, BSD-3, 0BSD): TCP and UDP through a tunnel without a
+# system network device, so no admin rights and no Android VpnService are needed.
+tokio-wireguard = { path = "third_party/tokio-wireguard", optional = true }
+ipnet = { version = "2", optional = true }
+futures-core = { version = "0.3", optional = true }
+libc = { version = "0.2", optional = true }
+# Tor inside the app (Arti, the Tor Project's Rust client, MIT/Apache). rustls, SQLite built from source.
+arti-client = { version = "0.47", optional = true, default-features = false, features = ["tokio", "rustls", "static-sqlite", "compression"] }
+# Tor's compression needs liblzma: built from source into the library, so the final link never depends on a
+# system liblzma being present or named (Fedora and MSYS2 have one, and the link failed there).
+liblzma-sys = { version = "0.4", optional = true, default-features = false, features = ["static"] }
+tor-rtcompat = { version = "0.47", optional = true, default-features = false, features = ["tokio", "rustls"] }
 rquickjs = { version = "0.9", optional = true }
 # WebP: pages of the Images mode are stored as WebP. The pages come as JPEG, PNG or WebP and are decoded first.
 png = { version = "0.17", optional = true }

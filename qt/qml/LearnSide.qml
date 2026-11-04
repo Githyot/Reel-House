@@ -87,7 +87,7 @@ Column {
                         PathAngleArc { centerX: 38; centerY: 38; radiusX: 32; radiusY: 32; startAngle: -90; sweepAngle: 360 * Math.max(0.001, ring.frac) }
                     }
                 }
-                LearnGlyph { anchors.centerIn: parent; name: ring.frac >= 1 ? "check" : "zap"; size: 26; color: ring.frac >= 1 ? Theme.c.success : sd.cFlame; filled: ring.frac < 1; fillColor: Qt.rgba(1, 0.59, 0, 0.3) }
+                LearnGlyph { anchors.centerIn: parent; name: ring.frac >= 1 ? "check" : "zap"; size: 26; color: ring.frac >= 1 ? Theme.c.successText : sd.cFlame; filled: ring.frac < 1; fillColor: Qt.rgba(1, 0.59, 0, 0.3) }
             }
             Column {
                 anchors.verticalCenter: parent.verticalCenter
@@ -211,7 +211,7 @@ Column {
                 readonly property var q: sd.quests[index] || ({})
                 readonly property var glyphs: ({xp: "zap", lessons: "book", perfect: "target", listen: "volume", combo: "sparkles", goal: "flag", practice: "dumbbell"})
                 width: parent.width; height: 52
-                LearnGlyph { id: qg; name: qrow.glyphs[qrow.q.kind] || "star"; size: 26; color: qrow.q.done === true ? Theme.c.success : sd.cFlame; anchors.verticalCenter: parent.verticalCenter }
+                LearnGlyph { id: qg; name: qrow.glyphs[qrow.q.kind] || "star"; size: 26; color: qrow.q.done === true ? Theme.c.successText : sd.cFlame; anchors.verticalCenter: parent.verticalCenter }
                 Column {
                     anchors { left: qg.right; leftMargin: 12; right: rew.left; rightMargin: 10; verticalCenter: parent.verticalCenter }
                     spacing: 6
@@ -222,7 +222,7 @@ Column {
                     id: rew
                     anchors { right: parent.right; verticalCenter: parent.verticalCenter }
                     spacing: 4
-                    LearnGlyph { name: qrow.q.done === true ? "check" : "gem"; size: 18; color: qrow.q.done === true ? Theme.c.success : sd.cGem; filled: qrow.q.done !== true; fillColor: Qt.rgba(sd.cGem.r, sd.cGem.g, sd.cGem.b, 0.3) }
+                    LearnGlyph { name: qrow.q.done === true ? "check" : "gem"; size: 18; color: qrow.q.done === true ? Theme.c.successText : sd.cGem; filled: qrow.q.done !== true; fillColor: Qt.rgba(sd.cGem.r, sd.cGem.g, sd.cGem.b, 0.3) }
                     Text { visible: qrow.q.done !== true; text: qrow.q.reward || 0; color: sd.cGem; font.pixelSize: 13; font.weight: Font.Bold; font.family: Theme.type.family }
                 }
             }

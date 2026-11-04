@@ -865,7 +865,10 @@ impl Core {
     }
 
     pub fn manga_close_reader(&mut self) {
-        self.manga_reader = None;
+        // the page reached is only written every few pages: closing must not lose it
+        if self.manga_reader.take().is_some() {
+            self.save_manga();
+        }
         self.manga_gen += 1;
         self.reader_changed();
     }

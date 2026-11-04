@@ -80,54 +80,6 @@ Column {
 
     // ---- touchpad, stick, vibration ----
     PrefGroup {
-        title: pc.tr("Touchpad and sticks")
-        PrefSwitch {
-            title: pc.tr("Touchpad as a mouse")
-            subtitle: pc.tr("PlayStation controllers: one finger moves the pointer, pressing the pad clicks, two fingers scroll")
-            checked: pc.g.pad_touch_mouse !== false
-            onToggled: function(on) { pc.set("general.pad_touch_mouse", on) }
-        }
-        PrefSlider {
-            title: pc.tr("Touchpad speed")
-            from: 20; to: 300; step: 10
-            property real dragged: -1
-            value: pc.g.pad_touch_speed || 100
-            onMoved: function(v) { dragged = v }
-            onReleased: { if (dragged >= 0) pc.set("general.pad_touch_speed", Math.round(dragged)); dragged = -1 }
-        }
-        PrefSlider {
-            title: pc.tr("Stick deadzone")
-            from: 5; to: 60; step: 5
-            property real dragged: -1
-            value: pc.g.pad_deadzone || 30
-            onMoved: function(v) { dragged = v }
-            onReleased: { if (dragged >= 0) pc.set("general.pad_deadzone", Math.round(dragged)); dragged = -1 }
-        }
-        PrefSwitch {
-            title: pc.tr("Zoom with the right stick")
-            subtitle: pc.tr("Off: L2 / R2 zoom the image reader and size the text reader, and the right stick only scrolls")
-            checked: pc.g.pad_zoom === "stick"
-            onToggled: function(on) { pc.set("general.pad_zoom", on ? "stick" : "triggers") }
-        }
-        PrefSlider {
-            title: pc.tr("Repeat speed of a held direction")
-            unit: " ms"
-            from: 40; to: 300; step: 10
-            property real dragged: -1
-            value: pc.g.pad_repeat || 90
-            onMoved: function(v) { dragged = v }
-            onReleased: { if (dragged >= 0) pc.set("general.pad_repeat", Math.round(dragged)); dragged = -1 }
-        }
-        PrefSwitch {
-            title: pc.tr("Vibrate when the focus moves")
-            subtitle: pc.tr("A short buzz of PlayStation controllers")
-            checked: pc.g.pad_rumble === true
-            onToggled: function(on) { pc.set("general.pad_rumble", on); if (on) Core.padRumble(110, 0, 45) }
-        }
-    }
-
-    // ---- look and focus sound ----
-    PrefGroup {
         title: pc.tr("Controller mode")
         PrefSwitch { title: pc.tr("Focus sound"); subtitle: pc.tr("A soft blip when the focus moves with a controller"); checked: pc.g.pad_sound !== false; onToggled: function(on) { pc.set("general.pad_sound", on) } }
         PrefSwitch { title: pc.tr("Orbs of time"); subtitle: pc.tr("Glowing orbs circle behind the pages while a controller is connected, like the PS2 loading screen"); checked: pc.g.pad_orbs !== false; onToggled: function(on) { pc.set("general.pad_orbs", on) } }
@@ -175,29 +127,84 @@ Column {
     }
 
     // ---- what the buttons do ----
-    PrefGroup {
-        title: pc.tr("Buttons")
-        description: pc.tr("The bar of hints on each screen shows the buttons that work there; it fades after a few seconds and comes back with any press.")
-        Repeater {
-            model: [
-                {title: "Everywhere", hints: [{button: "LS", text: "Move (menus, buttons, modes)"}, {button: "Pad", text: "Scroll the page"}, {button: "A", text: "Select (on a text box: keyboard)"}, {button: "B", text: "Back / close"}, {button: "RB", text: "Next tab or section (L1: previous)"}, {button: "RT", text: "Page down (L2: up)"}, {button: "Start", text: "Settings"}]},
-                {title: "Readers", hints: [{button: "Pad", text: "Turn the page / scroll"}, {button: "LS", text: "Tools"}, {button: "RT", text: "Zoom in / bigger text (or next page)"}, {button: "RB", text: "Next chapter"}, {button: "X", text: "Editor"}, {button: "Y", text: "Themes & Settings"}, {button: "R3", text: "Translation"}, {button: "Select", text: "Study card"}, {button: "L3", text: "Upscaling"}]},
-                {title: "Study review", hints: [{button: "A", text: "Show the answer, then Good"}, {button: "X", text: "Replay, then Again"}, {button: "Y", text: "Hard"}, {button: "B", text: "Easy"}]},
-                {title: "Player", hints: [{button: "A", text: "Play / pause"}, {button: "Pad", text: "Seek and volume"}, {button: "RB", text: "Previous / next episode"}, {button: "RT", text: "One minute"}, {button: "Y", text: "Subtitles and audio"}, {button: "X", text: "X-Ray"}]}
-            ]
-            delegate: PrefRow {
-                id: mapRow
-                required property var modelData
-                first: false
-                title: pc.tr(modelData.title)
-                PadHints {
-                    vertical: true
-                    // a fixed width: sized by its own content, the two-column choice (which reads the width) looped
-                    width: Math.max(200, Math.min(400, mapRow.width * 0.5))
-                    kind: pc.pad ? pc.pad.kind : "ps4"
-                    hints: mapRow.modelData.hints.map(function(h) { return {button: h.button, text: pc.tr(h.text)} })
+    PrefsAdvanced { dlg: pc.dlg }
+    Column {
+        visible: pc.dlg ? pc.dlg.adv : false
+        width: parent.width
+        spacing: 26
+        PrefGroup {
+            title: pc.tr("Touchpad and sticks")
+            PrefSwitch {
+                title: pc.tr("Touchpad as a mouse")
+                subtitle: pc.tr("PlayStation controllers: one finger moves the pointer, pressing the pad clicks, two fingers scroll")
+                checked: pc.g.pad_touch_mouse !== false
+                onToggled: function(on) { pc.set("general.pad_touch_mouse", on) }
+            }
+            PrefSlider {
+                title: pc.tr("Touchpad speed")
+                from: 20; to: 300; step: 10
+                property real dragged: -1
+                value: pc.g.pad_touch_speed || 100
+                onMoved: function(v) { dragged = v }
+                onReleased: { if (dragged >= 0) pc.set("general.pad_touch_speed", Math.round(dragged)); dragged = -1 }
+            }
+            PrefSlider {
+                title: pc.tr("Stick deadzone")
+                from: 5; to: 60; step: 5
+                property real dragged: -1
+                value: pc.g.pad_deadzone || 30
+                onMoved: function(v) { dragged = v }
+                onReleased: { if (dragged >= 0) pc.set("general.pad_deadzone", Math.round(dragged)); dragged = -1 }
+            }
+            PrefSwitch {
+                title: pc.tr("Zoom with the right stick")
+                subtitle: pc.tr("Off: L2 / R2 zoom the image reader and size the text reader, and the right stick only scrolls")
+                checked: pc.g.pad_zoom === "stick"
+                onToggled: function(on) { pc.set("general.pad_zoom", on ? "stick" : "triggers") }
+            }
+            PrefSlider {
+                title: pc.tr("Repeat speed of a held direction")
+                unit: " ms"
+                from: 40; to: 300; step: 10
+                property real dragged: -1
+                value: pc.g.pad_repeat || 90
+                onMoved: function(v) { dragged = v }
+                onReleased: { if (dragged >= 0) pc.set("general.pad_repeat", Math.round(dragged)); dragged = -1 }
+            }
+            PrefSwitch {
+                title: pc.tr("Vibrate when the focus moves")
+                subtitle: pc.tr("A short buzz of PlayStation controllers")
+                checked: pc.g.pad_rumble === true
+                onToggled: function(on) { pc.set("general.pad_rumble", on); if (on) Core.padRumble(110, 0, 45) }
+            }
+        }
+
+        // ---- look and focus sound ----
+        PrefGroup {
+            title: pc.tr("Buttons")
+            description: pc.tr("The bar of hints on each screen shows the buttons that work there; it fades after a few seconds and comes back with any press.")
+            Repeater {
+                model: [
+                    {title: "Everywhere", hints: [{button: "LS", text: "Move (menus, buttons, modes)"}, {button: "Pad", text: "Scroll the page"}, {button: "A", text: "Select (on a text box: keyboard)"}, {button: "B", text: "Back / close"}, {button: "RB", text: "Next tab or section (L1: previous)"}, {button: "RT", text: "Page down (L2: up)"}, {button: "Start", text: "Settings"}]},
+                    {title: "Readers", hints: [{button: "Pad", text: "Turn the page / scroll"}, {button: "LS", text: "Tools"}, {button: "RT", text: "Zoom in / bigger text (or next page)"}, {button: "RB", text: "Next chapter"}, {button: "X", text: "Editor"}, {button: "Y", text: "Themes & Settings"}, {button: "R3", text: "Translation"}, {button: "Select", text: "Study card"}, {button: "L3", text: "Upscaling"}]},
+                    {title: "Study review", hints: [{button: "A", text: "Show the answer, then Good"}, {button: "X", text: "Replay, then Again"}, {button: "Y", text: "Hard"}, {button: "B", text: "Easy"}]},
+                    {title: "Player", hints: [{button: "A", text: "Play / pause"}, {button: "Pad", text: "Seek and volume"}, {button: "RB", text: "Previous / next episode"}, {button: "RT", text: "One minute"}, {button: "Y", text: "Subtitles and audio"}, {button: "X", text: "X-Ray"}]}
+                ]
+                delegate: PrefRow {
+                    id: mapRow
+                    required property var modelData
+                    first: false
+                    title: pc.tr(modelData.title)
+                    PadHints {
+                        vertical: true
+                        // a fixed width: sized by its own content, the two-column choice (which reads the width) looped
+                        width: Math.max(200, Math.min(400, mapRow.width * 0.5))
+                        kind: pc.pad ? pc.pad.kind : "ps4"
+                        hints: mapRow.modelData.hints.map(function(h) { return {button: h.button, text: pc.tr(h.text)} })
+                    }
                 }
             }
         }
     }
+
 }

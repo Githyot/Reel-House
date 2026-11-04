@@ -289,7 +289,7 @@ Item {
                                 anchors.verticalCenter: parent.verticalCenter
                                 width: row.depth > 0 ? 28 : 38; height: width
                                 radius: Theme.layout.buttons === "capsule" ? width / 2 : Theme.shape.medium
-                                color: row.depth > 0 ? "transparent" : Qt.rgba(Theme.c.accent.r, Theme.c.accent.g, Theme.c.accent.b, 0.15)
+                                color: row.depth > 0 ? "transparent" : Qt.alpha(Theme.c.accent, 0.15)
                                 Icon { anchors.centerIn: parent; name: row.depth > 0 ? "right" : "study"; size: row.depth > 0 ? 16 : 20; color: row.depth > 0 ? Theme.c.textDim : Theme.c.accentText }
                             }
                             Column {

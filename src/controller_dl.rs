@@ -430,6 +430,7 @@ impl Core {
         if finished && !before.2 {
             self.dl_running.remove(&hash);
             self.toast(&format!("{} is saved on disk.", title));
+            self.dl_enforce_limit();
         }
     }
 
@@ -630,5 +631,305 @@ impl Core {
         let poster = self.poster_for(&meta);
         self.downloads.push(Download { hash: hash.clone(), saved: false, meta_id: meta.id.clone(), kind: meta.kind.clone(), title: meta.name.clone(), poster, name: res.torrent_name.clone(), files, added: util::now_unix(), ..Default::default() });
         downloads::save(&self.data_dir, &self.downloads);
+    }
+}
+
+/// The file of an episode watched to the end. It is deleted once the player lets go of it.
+#[derive(Clone, Debug)]
+pub struct Finished {
+    /// Info hash of the torrent it belongs to (empty when the registry has no record of it).
+    pub hash: String,
+    pub path: PathBuf,
+}
+
+/// Files still to delete (a player or the engine held them open): `purge.json` in the data folder.
+fn pending_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("purge.json")
+}
+
+fn pending_load(data_dir: &Path) -> Vec<String> {
+    std::fs::read_to_string(pending_path(data_dir))
+        .ok()
+        .and_then(|t| crate::json::Json::parse(&t).ok())
+        .map(|j| j.items().iter().map(|x| x.str()).filter(|x| !x.is_empty()).collect())
+        .unwrap_or_default()
+}
+
+fn pending_edit(data_dir: &Path, f: impl FnOnce(&mut Vec<String>)) {
+    // Threads of the GUI and of the deleters both write it; one at a time.
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _g = LOCK.lock();
+    let mut v = pending_load(data_dir);
+    f(&mut v);
+    v.dedup();
+    let p = pending_path(data_dir);
+    if v.is_empty() {
+        let _ = std::fs::remove_file(p);
+    } else {
+        let _ = std::fs::write(p, crate::json::Json::Arr(v.into_iter().map(crate::json::Json::Str).collect()).pretty());
+    }
+}
+
+/// Deletes one file inside the torrents folder, and the folders it leaves empty. Tries for a while:
+/// the player and the engine may still hold it. True when it is gone.
+fn delete_in(dl_dir: &Path, path: &Path, tries: &[u64]) -> bool {
+    if !path.starts_with(dl_dir) || path == dl_dir {
+        return false;
+    }
+    for wait in tries {
+        std::thread::sleep(Duration::from_millis(*wait));
+        if !path.exists() || std::fs::remove_file(path).is_ok() {
+            let mut cur = path.parent().map(|p| p.to_path_buf());
+            while let Some(c) = cur {
+                if c == dl_dir || !c.starts_with(dl_dir) || std::fs::remove_dir(&c).is_err() {
+                    break;
+                }
+                cur = c.parent().map(|p| p.to_path_buf());
+            }
+            return true;
+        }
+    }
+    false
+}
+
+impl Core {
+    /// The torrent the player is streaming now, if any.
+    fn playing_hash(&self) -> Option<String> {
+        let s = self.session.as_ref()?;
+        s.resolved.as_ref().and_then(|r| r.torrent.as_ref()).map(|t| t.2.clone()).or_else(|| s.torrent.as_ref().map(|t| t.2.clone()))
+    }
+
+    /// The episode playing was watched to the end: note its file in the torrents folder, to delete it when the player
+    /// lets go of it (Preferences > Torrents > "Delete episodes once watched"). Files outside that folder (the user's own) are never touched.
+    pub(super) fn dl_note_finished(&mut self) {
+        if !self.settings.general.delete_watched {
+            return;
+        }
+        let dl_dir = self.data_dir.join("torrents");
+        let Some(res) = self.session.as_ref().and_then(|s| s.resolved.as_ref()) else { return };
+        let found: Option<(String, PathBuf)> = match res.torrent.as_ref() {
+            Some((_, _, hash)) => {
+                // streamed: the address ends with the index of the file in the torrent
+                let idx = res.url.rsplit('/').next().and_then(|n| n.parse::<usize>().ok());
+                idx.and_then(|i| {
+                    let from_record = self.downloads.iter().find(|d| &d.hash == hash).and_then(|d| {
+                        let f = d.files.iter().find(|f| f.idx == i)?;
+                        downloads::locate(&dl_dir, &d.name, &f.path).or_else(|| Some(dl_dir.join(&d.name).join(&f.path)))
+                    });
+                    let from_resolved = || res.torrent_files.get(i).map(|(p, _)| downloads::locate(&dl_dir, &res.torrent_name, p).unwrap_or_else(|| dl_dir.join(&res.torrent_name).join(p)));
+                    from_record.or_else(from_resolved).map(|p| (hash.clone(), p))
+                })
+            }
+            None => {
+                // a copy kept on disk ("Keep downloaded"), played as a file
+                let p = PathBuf::from(&res.url);
+                if !p.starts_with(&dl_dir) {
+                    return;
+                }
+                let hash = self.downloads.iter().find(|d| d.files.iter().any(|f| downloads::locate(&dl_dir, &d.name, &f.path).as_deref() == Some(p.as_path()))).map(|d| d.hash.clone()).unwrap_or_default();
+                Some((hash, p))
+            }
+        };
+        let Some((hash, path)) = found else { return };
+        if !path.starts_with(&dl_dir) || path == dl_dir {
+            return;
+        }
+        crate::debug::log("downloads", &format!("watched to the end, to delete: {}", path.display()));
+        // noted on disk too, so it goes even if the app is closed while the video is still open
+        let s = path.to_string_lossy().into_owned();
+        pending_edit(&self.data_dir, |v| v.push(s));
+        if let Some(sess) = self.session.as_mut() {
+            sess.finished = Some(Finished { hash, path });
+        }
+    }
+
+    /// Deletes the file of an episode watched to the end (the player has stopped it).
+    pub(super) fn dl_purge(&mut self, f: Finished) {
+        if !self.settings.general.delete_watched {
+            let s = f.path.to_string_lossy().into_owned();
+            pending_edit(&self.data_dir, |v| v.retain(|x| x != &s));
+            return;
+        }
+        let dl_dir = self.data_dir.join("torrents");
+        // a copy kept on purpose must not be downloaded again
+        if let Some(d) = self.downloads.iter_mut().find(|d| d.hash == f.hash) {
+            for file in d.files.iter_mut() {
+                if downloads::locate(&dl_dir, &d.name, &file.path).as_deref() == Some(f.path.as_path()) {
+                    file.done = true;
+                }
+            }
+            downloads::save(&self.data_dir, &self.downloads);
+        }
+        let data_dir = self.data_dir.clone();
+        self.spawn(move |tx, _http| {
+            let gone = delete_in(&dl_dir, &f.path, &[300, 1000, 2000, 4000, 8000]);
+            crate::debug::log("downloads", &format!("{} {}", if gone { "deleted the watched episode" } else { "could not delete yet (in use), later:" }, f.path.display()));
+            if gone {
+                let s = f.path.to_string_lossy().into_owned();
+                pending_edit(&data_dir, |v| v.retain(|x| x != &s));
+            }
+            send(tx, Msg::DlPurged(f.hash));
+        });
+    }
+
+    /// After a watched episode was deleted: a record with nothing left on disk goes, and so does its torrent in the engine.
+    pub(super) fn on_dl_purged(&mut self, hash: String) {
+        let dl_dir = self.data_dir.join("torrents");
+        let playing = self.playing_hash();
+        if !hash.is_empty() && playing.as_deref() != Some(hash.as_str()) && !self.dl_running.contains(&hash) {
+            if let Some(i) = self.downloads.iter().position(|d| d.hash == hash) {
+                let d = &self.downloads[i];
+                let empty = downloads::disk_bytes(&dl_dir, d) == 0;
+                if empty && (!d.saved || d.files.iter().all(|f| f.done)) {
+                    let d = self.downloads.remove(i);
+                    downloads::save(&self.data_dir, &self.downloads);
+                    let engine = self.engine.clone();
+                    self.spawn(move |_tx, http| {
+                        let base = engine.lock().ok().and_then(|g| g.as_ref().map(|p| p.base()));
+                        if let Some(b) = base {
+                            Rqbit { http: &*http, base: b }.delete(&d.hash);
+                        }
+                    });
+                }
+            }
+        }
+        self.events.push(Event::Downloads);
+        self.events.push(Event::Detail);
+    }
+
+    /// When the app opens: files of watched episodes left behind last time, then the cache limit.
+    pub(super) fn dl_startup_cleanup(&mut self) {
+        let pending = pending_load(&self.data_dir);
+        if !pending.is_empty() {
+            let dl_dir = self.data_dir.join("torrents");
+            if self.settings.general.delete_watched {
+                for d in self.downloads.iter_mut() {
+                    for file in d.files.iter_mut() {
+                        if let Some(p) = downloads::locate(&dl_dir, &d.name, &file.path) {
+                            if pending.iter().any(|x| Path::new(x) == p.as_path()) {
+                                file.done = true;
+                            }
+                        }
+                    }
+                }
+                downloads::save(&self.data_dir, &self.downloads);
+            }
+            let (data_dir, on) = (self.data_dir.clone(), self.settings.general.delete_watched);
+            self.spawn(move |tx, _http| {
+                let mut gone: Vec<String> = Vec::new();
+                if on {
+                    for p in &pending {
+                        if delete_in(&dl_dir, Path::new(p), &[0]) {
+                            gone.push(p.clone());
+                        }
+                    }
+                } else {
+                    gone = pending.clone();
+                }
+                pending_edit(&data_dir, |v| v.retain(|x| !gone.contains(x)));
+                send(tx, Msg::DlPurged(String::new()));
+            });
+        }
+        self.dl_enforce_limit();
+    }
+
+    /// Keeps the torrents folder under the limit chosen in Preferences > Torrents. The streaming cache goes first
+    /// (oldest first), then folders the app has no record of, then copies kept on purpose (oldest first). Never what is
+    /// playing, being downloaded, or the newest copy kept on purpose.
+    pub fn dl_enforce_limit(&mut self) {
+        let gb = self.settings.general.cache_limit_gb as u64;
+        if gb == 0 {
+            return;
+        }
+        let limit = gb * 1024 * 1024 * 1024;
+        let dl_dir = self.data_dir.join("torrents");
+        let on_disk = downloads::folder_entries(&dl_dir);
+        let mut total: u64 = on_disk.iter().map(|(_, s)| *s).sum();
+        if total <= limit {
+            return;
+        }
+        let playing = self.playing_hash();
+        let playing_file = self.session.as_ref().and_then(|s| s.resolved.as_ref()).map(|r| PathBuf::from(&r.url));
+        let newest_saved = self.downloads.iter().filter(|d| d.saved).max_by_key(|d| d.added).map(|d| d.hash.clone());
+        // (rank, age, what): rank 0 = streaming cache, 1 = unknown folder, 2 = kept on purpose
+        enum Victim {
+            Record(String),
+            Folder(String),
+        }
+        let mut cands: Vec<(u8, u64, u64, Victim)> = Vec::new();
+        let mut known: Vec<String> = Vec::new();
+        for d in &self.downloads {
+            known.push(d.root());
+            known.push(d.name.clone());
+            if Some(&d.hash) == playing.as_ref() || self.dl_running.contains(&d.hash) || (d.saved && Some(&d.hash) == newest_saved.as_ref()) {
+                continue;
+            }
+            if let Some(pf) = &playing_file {
+                if d.files.iter().any(|f| downloads::locate(&dl_dir, &d.name, &f.path).as_deref() == Some(pf.as_path())) {
+                    continue;
+                }
+            }
+            let bytes = downloads::disk_bytes(&dl_dir, d);
+            if bytes > 0 {
+                cands.push((if d.saved { 2 } else { 0 }, d.added, bytes, Victim::Record(d.hash.clone())));
+            }
+        }
+        // a folder with no record may be what the engine streams right now
+        if self.session.is_none() {
+            for (name, bytes) in &on_disk {
+                if known.contains(name) || *bytes == 0 {
+                    continue;
+                }
+                let age = std::fs::metadata(dl_dir.join(name)).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs()).unwrap_or(0);
+                cands.push((1, age, *bytes, Victim::Folder(name.clone())));
+            }
+        }
+        cands.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+        let mut records: Vec<Download> = Vec::new();
+        let mut folders: Vec<String> = Vec::new();
+        for (_, _, bytes, v) in cands {
+            if total <= limit {
+                break;
+            }
+            total = total.saturating_sub(bytes);
+            match v {
+                Victim::Record(h) => {
+                    if let Some(i) = self.downloads.iter().position(|d| d.hash == h) {
+                        records.push(self.downloads.remove(i));
+                    }
+                }
+                Victim::Folder(n) => folders.push(n),
+            }
+        }
+        if records.is_empty() && folders.is_empty() {
+            return;
+        }
+        crate::debug::log("downloads", &format!("cache limit {} GB: deleting {} torrents and {} folders", gb, records.len(), folders.len()));
+        downloads::save(&self.data_dir, &self.downloads);
+        let engine = self.engine.clone();
+        self.spawn(move |tx, http| {
+            let base = engine.lock().ok().and_then(|g| g.as_ref().map(|p| p.base()));
+            let mut freed = 0u64;
+            for d in &records {
+                if let Some(b) = &base {
+                    Rqbit { http: &*http, base: b.clone() }.delete(&d.hash);
+                }
+            }
+            if base.is_some() && !records.is_empty() {
+                std::thread::sleep(Duration::from_millis(700));
+            }
+            for d in &records {
+                freed += downloads::remove_files(&dl_dir, d);
+            }
+            for n in &folders {
+                let p = dl_dir.join(n);
+                let size = if p.is_dir() { downloads::dir_bytes(&p) } else { std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0) };
+                let ok = if p.is_dir() { std::fs::remove_dir_all(&p).is_ok() } else { std::fs::remove_file(&p).is_ok() };
+                if ok {
+                    freed += size;
+                }
+            }
+            send(tx, Msg::DlEvicted(freed));
+        });
     }
 }

@@ -423,7 +423,7 @@ Item {
     // A flat card in the theme's shape (the corners and the hair line of StudySurface, without its glass, shadows
     // and colour animation: many of them scroll at once here).
     component Card: Rectangle {
-        radius: Theme.id === "android" ? 16 : (Theme.id === "windows" ? 8 : 12)
+        radius: Theme.shape.card
         color: Theme.c.card
         border.width: Theme.id === "windows" || Theme.id === "gnome" ? 1 : 0
         border.color: Theme.id === "windows" ? Theme.c.border : Theme.c.divider
@@ -485,7 +485,7 @@ Item {
                     visible: (kp.k.lang || "") !== ""
                     height: 34; radius: 17
                     width: aiRow.implicitWidth + 24
-                    color: (kp.k.aiMissing || "") !== "" ? Qt.rgba(Theme.c.warning.r, Theme.c.warning.g, Theme.c.warning.b, 0.18) : (aiArea.containsMouse ? Theme.c.buttonHover : Theme.c.fill)
+                    color: (kp.k.aiMissing || "") !== "" ? Qt.alpha(Theme.c.warning, 0.18) : (aiArea.containsMouse ? Theme.c.buttonHover : Theme.c.fill)
                     Row {
                         id: aiRow
                         anchors.centerIn: parent
@@ -506,8 +506,8 @@ Item {
                     onEditingFinished: kp.set("kaiwa_ollama", text)
                 }
             }
-            Lbl { visible: (kp.k.aiMissing || "") !== ""; width: parent.width; wrapMode: Text.Wrap; text: kp.tr(kp.k.aiMissing || ""); color: Theme.c.warning; size: 13 }
-            Lbl { visible: (kp.k.error || "") !== "" && kp.s === null; width: parent.width; wrapMode: Text.Wrap; text: kp.tr(kp.k.error || ""); color: Theme.c.error; size: 13 }
+            Lbl { visible: (kp.k.aiMissing || "") !== ""; width: parent.width; wrapMode: Text.Wrap; text: kp.tr(kp.k.aiMissing || ""); color: Theme.c.warningText; size: 13 }
+            Lbl { visible: (kp.k.error || "") !== "" && kp.s === null; width: parent.width; wrapMode: Text.Wrap; text: kp.tr(kp.k.error || ""); color: Theme.c.errorText; size: 13 }
         }
         Rectangle { id: headLine; anchors { top: head.bottom; topMargin: 12; left: parent.left; right: parent.right } height: 1; color: Theme.c.divider }
 
@@ -1012,7 +1012,7 @@ Item {
                     }
                 }
                 HeardStrip { width: parent.width; sid: kp.s ? kp.s.id : -1; ja: kp.ja; showRomaji: kp.g.kaiwa_romaji === true }
-                Lbl { visible: kp.micError !== ""; width: parent.width; wrapMode: Text.Wrap; text: kp.micError; color: Theme.c.error; size: 13 }
+                Lbl { visible: kp.micError !== ""; width: parent.width; wrapMode: Text.Wrap; text: kp.micError; color: Theme.c.errorText; size: 13 }
                 FlatButton {
                     visible: kp.micNeedsKey || (kp.liveSession && !kp.liveHere && kp.lv.hasKey !== true)
                     kind: "suggested"; glyph: "external"; text: kp.tr("Get a free key"); implicitHeight: 32
@@ -1041,7 +1041,7 @@ Item {
                         width: Math.min(kp.cw - 120, Math.max(errMain.implicitWidth, errDetail.visible ? errDetail.implicitWidth : 0))
                         anchors.verticalCenter: parent.verticalCenter
                         spacing: 2
-                        Lbl { id: errMain; width: Math.min(kp.cw - 120, implicitWidth); wrapMode: Text.Wrap; text: kp.tr(kp.k.error || ""); color: Theme.c.error; size: 13 }
+                        Lbl { id: errMain; width: Math.min(kp.cw - 120, implicitWidth); wrapMode: Text.Wrap; text: kp.tr(kp.k.error || ""); color: Theme.c.errorText; size: 13 }
                         // the technical side (model, seconds, the raw error, the microphone's level): for the log and for help
                         Lbl { id: errDetail; visible: (kp.k.errorDetail || "") !== ""; width: Math.min(kp.cw - 120, implicitWidth); wrapMode: Text.Wrap; text: kp.k.errorDetail || ""; dim: true; size: 11 }
                     }
@@ -1161,7 +1161,7 @@ Item {
                         width: Math.min(row.maxW, chkCol.implicitWidth + 24)
                         height: chkCol.implicitHeight + 16
                         radius: 12
-                        color: Qt.rgba(ok ? Theme.c.success.r : Theme.c.warning.r, ok ? Theme.c.success.g : Theme.c.warning.g, ok ? Theme.c.success.b : Theme.c.warning.b, 0.14)
+                        color: Qt.alpha(ok ? Theme.c.success : Theme.c.warning, 0.14)
                         Column {
                             id: chkCol
                             x: 12; y: 8
@@ -1202,14 +1202,14 @@ Item {
             anchors { bottom: composer.top; bottomMargin: 6 }
             x: kp.x0; width: kp.cw
             height: hCol2.implicitHeight + 16
-            radius: 12
+            radius: Theme.shape.popover
             color: Theme.c.popover
             border.width: 1; border.color: Theme.c.border
             Column {
                 id: hCol2
                 x: 10; y: 8; width: parent.width - 20; spacing: 4
                 Lbl { visible: kp.k.hintsBusy === true; text: kp.tr("Thinking of replies…"); dim: true; size: 12 }
-                Lbl { visible: !!(kp.k.hints && kp.k.hints.error); text: kp.k.hints && kp.k.hints.error ? kp.tr(kp.k.hints.error) : ""; color: Theme.c.error; size: 12 }
+                Lbl { visible: !!(kp.k.hints && kp.k.hints.error); text: kp.k.hints && kp.k.hints.error ? kp.tr(kp.k.hints.error) : ""; color: Theme.c.errorText; size: 12 }
                 Repeater {
                     model: hintsBox.visible ? hintsBox.h : []
                     delegate: Rectangle {
@@ -1278,13 +1278,13 @@ Item {
                         anchors.centerIn: parent
                         width: 72 + (kp.mic ? kp.mic.level * 18 : 0); height: width; radius: width / 2
                         visible: kp.recording
-                        color: Qt.rgba(Theme.c.accent.r, Theme.c.accent.g, Theme.c.accent.b, 0.25)
+                        color: Qt.alpha(Theme.c.accent, 0.25)
                     }
                     Rectangle {
                         anchors.fill: parent; radius: 36
                         color: kp.recording ? Theme.c.error : Theme.c.accent
                         opacity: callMic.enabled ? 1 : 0.5
-                        Icon { anchors.centerIn: parent; name: kp.recording ? "pause" : "mic"; size: 30; color: Theme.c.accentFg }
+                        Icon { anchors.centerIn: parent; name: kp.recording ? "pause" : "mic"; size: 30; color: kp.recording ? Theme.c.errorFg : Theme.c.accentFg }
                         MouseArea { id: callMic; anchors.fill: parent; enabled: kp.k.listening !== true && kp.k.busy !== true; cursorShape: Qt.PointingHandCursor; onClicked: kp.toggleMic() }
                     }
                     PadMark { visible: kp.padActive; ps: kp.padPs; button: "A"; size: 20 }
@@ -1334,7 +1334,7 @@ Item {
         width: Math.min(420, kp.width - 32)
         padding: 18
         modal: false
-        background: Rectangle { radius: 14; color: Theme.c.popover; border.width: 1; border.color: Theme.c.border }
+        background: Rectangle { radius: Theme.shape.popover; color: Theme.c.popover; border.width: 1; border.color: Theme.c.border }
         contentItem: Column {
             spacing: 8
             Row {
@@ -1344,7 +1344,7 @@ Item {
                 FlatButton { kind: "flat"; glyph: "volume"; implicitWidth: 32; implicitHeight: 30; onClicked: Core.cmd({cmd: "kaiwa_speak", text: wordPop.w.word || ""}) }
             }
             Lbl { visible: wordPop.w.loading === true; text: kp.tr("Looking it up…"); dim: true }
-            Lbl { visible: !!wordPop.w.error; width: parent.width; wrapMode: Text.Wrap; text: kp.tr(wordPop.w.error || ""); color: Theme.c.error; size: 13 }
+            Lbl { visible: !!wordPop.w.error; width: parent.width; wrapMode: Text.Wrap; text: kp.tr(wordPop.w.error || ""); color: Theme.c.errorText; size: 13 }
             Lbl { visible: text !== ""; width: parent.width; wrapMode: Text.Wrap; text: wordPop.w.meaning || ""; size: 15 }
             Lbl { visible: text !== ""; width: parent.width; wrapMode: Text.Wrap; text: wordPop.w.note || ""; dim: true; size: 13 }
             Lbl { visible: text !== ""; width: parent.width; wrapMode: Text.Wrap; text: wordPop.w.example || ""; size: 14; topPadding: 4 }

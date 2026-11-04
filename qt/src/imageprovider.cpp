@@ -21,6 +21,9 @@
 #include <QtConcurrent>
 #include <QFutureWatcher>
 #include <utility>
+#include <cmath>
+#include <algorithm>
+#include <QRegularExpression>
 
 namespace {
 QAtomicInt g_asked(0), g_done(0), g_gen(0);
@@ -80,7 +83,12 @@ QImage decodeFull(const QByteArray &bytes) {
 }
 
 QImage fit(QImage img, const QSize &want) {
-    if (!img.isNull() && want.isValid() && want.width() > 0 && img.width() > want.width())
+    if (!img.isNull() && want.width() > 0 && want.height() > 0) {
+        // Both sides asked for (a cropped poster frame): the smallest size that still covers the frame, so a picture
+        // is never kept bigger than what the screen draws (memory) nor smaller (blur).
+        const double k = std::max(double(want.width()) / img.width(), double(want.height()) / img.height());
+        if (k < 1.0) img = img.scaled(std::max(1, int(std::ceil(img.width() * k))), std::max(1, int(std::ceil(img.height() * k))), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    } else if (!img.isNull() && want.width() > 0 && img.width() > want.width())
         img = img.scaledToWidth(want.width(), Qt::SmoothTransformation);
     // A graphics card cannot hold a picture bigger than its texture limit (often 8192 or 16384 on Windows): a very long
     // webtoon page would stay blank or take the program down. Keep the proportion, shrink to fit the limit.
@@ -91,6 +99,33 @@ QImage fit(QImage img, const QSize &want) {
 }
 
 QImage decode(const QByteArray &bytes, const QSize &want) { return fit(decodeFull(bytes), want); }
+
+// The same picture in a smaller size from the hosts that offer several (TMDB, Kitsu), chosen by what is drawn: a
+// 150 px poster on a normal screen does not need the 500 px file. Empty when there is nothing smaller to ask for.
+// The width needed is the larger of the frame's width and 0.7 x its height (a poster covering a portrait frame).
+QString smallerVariant(const QString &url, const QSize &want) {
+    if (want.width() <= 0) return {};
+    const int need = std::max(want.width(), want.height() > 0 ? int(std::ceil(want.height() * 0.7)) : 0);
+    static const QRegularExpression tmdb(QStringLiteral("^(https?://image\\.tmdb\\.org/t/p/)(w(\\d+)|original)(/.+)$"));
+    if (const auto m = tmdb.match(url); m.hasMatch()) {
+        const int have = m.captured(3).isEmpty() ? 1 << 30 : m.captured(3).toInt();
+        for (int w : {92, 154, 185, 342, 500, 780, 1280}) {
+            if (w >= need) return w < have ? m.captured(1) + QStringLiteral("w%1").arg(w) + m.captured(4) : QString();
+        }
+        return have > 1280 ? m.captured(1) + QStringLiteral("w1280") + m.captured(4) : QString();
+    }
+    // Kitsu posters: tiny 110, small 284, medium 390, large 550 px wide
+    static const QRegularExpression kitsu(QStringLiteral("^(https?://media\\.kitsu\\.(?:app|io)/(?:anime|manga)/poster_images/\\d+/)(tiny|small|medium|large|original)(\\.\\w+.*)$"));
+    if (const auto m = kitsu.match(url); m.hasMatch()) {
+        static const QList<QPair<QString, int>> sizes = {{"tiny", 110}, {"small", 284}, {"medium", 390}, {"large", 550}};
+        int have = 1 << 30;
+        for (const auto &z : sizes) if (z.first == m.captured(2)) have = z.second;
+        for (const auto &z : sizes) {
+            if (z.second >= need) return z.second < have ? m.captured(1) + z.first + m.captured(3) : QString();
+        }
+    }
+    return {};
+}
 
 // Local pictures already made smaller (the upscaled pages): kept decoded in memory, so turning back to a page or
 // scrolling a strip does not read and shrink a large PNG again. Cost in KB, about 320 MB at most.
@@ -172,6 +207,12 @@ public:
             return;
         }
         Q_UNUSED(p);
+        // A smaller file of the same picture when the host has one (kept on the device under its own address); the
+        // full picture already kept on the device is used as it is.
+        if (const QString small = smallerVariant(m_url, want); !small.isEmpty()) {
+            const QString keptFull = webpPath(m_url);
+            if (keptFull.isEmpty() || !QFileInfo::exists(keptFull)) { m_full = m_url; m_url = small; }
+        }
         // A picture kept on this device as WebP is read from there, without going to the web.
         if (const QString kept = webpPath(m_url); !kept.isEmpty() && QFileInfo::exists(kept)) {
             QFile f(kept);
@@ -257,6 +298,16 @@ public:
     // What is left after a failed or unreadable reply: the cover found by the title, a fresh try, or giving up.
     void finishFailed(bool fresh, bool canceled = false, bool ok = false, bool cached = false) {
         {
+            // the smaller file did not come: the full picture, as before
+            if (m_image.isNull() && !canceled && !m_full.isEmpty()) {
+                qInfo() << "picture: smaller size failed, asking for the full one:" << m_url;
+                m_url = std::exchange(m_full, QString());
+                m_tries = 0;
+                m_err.clear();
+                m_byCore = false;
+                start(false);
+                return;
+            }
             if (m_image.isNull() && !canceled && !ok && !m_title.isEmpty() && !m_byTitle) {
                 m_byTitle = true;
                 auto *w = new QFutureWatcher<QByteArray>(this);
@@ -306,7 +357,7 @@ public:
     void cancel() override { if (m_reply) m_reply->abort(); }
 private:
     void done() { if (m_counted) { m_counted = false; g_done.fetchAndAddRelaxed(1); } emit finished(); }
-    QSize m_want; QString m_url, m_title, m_err; int m_tries = 0, m_http = 0; bool m_byTitle = false, m_byCore = false; bool m_counted = false; QImage m_image; QNetworkReply *m_reply = nullptr;
+    QSize m_want; QString m_url, m_full, m_title, m_err; int m_tries = 0, m_http = 0; bool m_byTitle = false, m_byCore = false; bool m_counted = false; QImage m_image; QNetworkReply *m_reply = nullptr;
 };
 }
 

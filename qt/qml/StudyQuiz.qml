@@ -144,7 +144,7 @@ Item {
                 Text {
                     Layout.fillWidth: true
                     text: !sq.quiz ? "" : sq.quiz.kind === "listen" ? sq.tr("Listening practice")
-                        : sq.quiz.kind === "credits" ? sq.tr("The macaw's quiz") + ((sq.quiz.steps || 0) > 1 ? "  ·  " + sq.quiz.step + "/" + sq.quiz.steps : "")
+                        : sq.quiz.kind === "credits" ? sq.tr("Arara's quiz") + ((sq.quiz.steps || 0) > 1 ? "  ·  " + sq.quiz.step + "/" + sq.quiz.steps : "")
                         : sq.tr("Study while watching")
                     color: sq.ink
                     font.pixelSize: 13; font.weight: Font.Bold; font.family: Theme.type.family

@@ -363,7 +363,7 @@ Popup {
                             ["study_quiz_listen", "Parts without subtitles"],
                             ["study_wordmix", "Mix learned words into subtitles"],
                             ["study_mining", "Make cards from single words"],
-                            ["study_mascot_cues", "The macaw helps while you watch"]
+                            ["study_mascot_cues", "Arara helps while you watch"]
                         ][index]
                         text: Core.tr(Core.uiLang, row[1])
                         checked: sm.g[row[0]] !== false

@@ -6,7 +6,16 @@ $tmp = Join-Path $env:TEMP "reelhouse-assets"
 New-Item -ItemType Directory -Force $assets, "$assets\shaders", $tmp | Out-Null
 
 Write-Host "libmpv..."
-gh release download -R shinchiro/mpv-winbuild-cmake -p "mpv-dev-x86_64-2*.7z" -D $tmp --clobber
+# The newest upstream release is sometimes published before its files are uploaded; fall back to older ones.
+$got = $false
+$tags = @("") + @(gh release list -R shinchiro/mpv-winbuild-cmake -L 6 --json tagName -q ".[].tagName")
+foreach ($tag in $tags) {
+  $args_ = @("release", "download") + $(if ($tag) { @($tag) } else { @() }) + @("-R", "shinchiro/mpv-winbuild-cmake", "-p", "mpv-dev-x86_64-2*.7z", "-D", $tmp, "--clobber")
+  & gh @args_ 2>$null
+  if ($LASTEXITCODE -eq 0 -and (Get-ChildItem $tmp -Filter "mpv-dev-x86_64-2*.7z")) { $got = $true; break }
+  Write-Host "no libmpv package in release '$tag', trying an older one"
+}
+if (-not $got) { throw "Could not download libmpv from shinchiro/mpv-winbuild-cmake." }
 $mpv7z = Get-ChildItem $tmp -Filter "mpv-dev-x86_64-2*.7z" | Sort-Object LastWriteTime | Select-Object -Last 1
 $mx = Join-Path $tmp "mpvx"
 Remove-Item $mx -Recurse -Force -ErrorAction SilentlyContinue

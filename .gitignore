@@ -5,3 +5,8 @@ qtbridge/target/
 dist/
 qt/build/
 __pycache__/
+
+# Private working notes of the development repo: never part of this public repo
+.continuity/
+CLAUDE.md
+.claude/

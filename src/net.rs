@@ -7,16 +7,34 @@ pub struct UreqHttp {
     agent: ureq::Agent,
     /// Same as `agent`, never through a proxy: for the engines on this computer.
     local: ureq::Agent,
+    /// With IP protection on (src/privacy.rs): the agent that goes through the local gateway, made for its address.
+    guarded: std::sync::Mutex<Option<(String, ureq::Agent)>>,
 }
 
 impl UreqHttp {
-    fn pick(&self, url: &str) -> &ureq::Agent {
+    fn pick(&self, url: &str) -> ureq::Agent {
         let rest = url.split("://").nth(1).unwrap_or("");
         if rest.starts_with("127.0.0.1") || rest.starts_with("localhost") || rest.starts_with("[::1]") {
-            &self.local
-        } else {
-            &self.agent
+            return self.local.clone();
         }
+        // the home network (a Suwayomi server on another PC of the house) is never sent through the tunnel
+        if crate::privacy::active() && crate::connectivity::is_local(url) {
+            return self.local.clone();
+        }
+        // IP protection: every request to another computer goes through the gateway (never straight: kill switch)
+        if let Some(proxy) = crate::privacy::http_proxy() {
+            let mut g = self.guarded.lock().unwrap_or_else(|p| p.into_inner());
+            if g.as_ref().map(|(p, _)| p != &proxy).unwrap_or(true) {
+                if let Ok(p) = ureq::Proxy::new(&proxy) {
+                    let a = ureq::AgentBuilder::new().proxy(p).timeout_connect(Duration::from_secs(30)).user_agent("Reelhouse/0.2").redirects(5).build();
+                    *g = Some((proxy.clone(), a));
+                }
+            }
+            if let Some((_, a)) = g.as_ref() {
+                return a.clone();
+            }
+        }
+        self.agent.clone()
     }
 }
 
@@ -34,11 +52,14 @@ fn v4_first(netloc: &str) -> std::io::Result<Vec<std::net::SocketAddr>> {
 /// Offline, a request to another computer is refused at once (no 12 s connect timeout per request); the callers
 /// that keep a copy on disk show it instead (src/connectivity.rs).
 fn gate(url: &str) -> Result<(), String> {
-    if crate::connectivity::online() || crate::connectivity::is_local(url) {
-        Ok(())
-    } else {
-        Err(crate::connectivity::offline_error(url))
+    if crate::connectivity::is_local(url) {
+        return Ok(());
     }
+    if !crate::connectivity::online() {
+        return Err(crate::connectivity::offline_error(url));
+    }
+    // IP protection on and its tunnel not working: refused, never sent without it (kill switch)
+    crate::privacy::gate()
 }
 
 /// A request that could not connect asks the watcher to check the connection now.
@@ -59,7 +80,7 @@ impl UreqHttp {
         }
         let local = ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(12)).user_agent("Reelhouse/0.2").redirects(5).build();
         let agent = b.build();
-        UreqHttp { agent, local }
+        UreqHttp { agent, local, guarded: std::sync::Mutex::new(None) }
     }
 }
 

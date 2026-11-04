@@ -68,7 +68,7 @@ Popup {
             visible: cp.kind === "windows"
             anchors.fill: parent
             radius: cp.corner
-            color: Qt.rgba(Theme.c.popover.r, Theme.c.popover.g, Theme.c.popover.b, 0.94)
+            color: Qt.alpha(Theme.c.popover, 0.94)
             border.width: 1
             border.color: Theme.c.border
             Rectangle { anchors { top: parent.top; left: parent.left; right: parent.right; margins: 1 } height: 1; color: "#14ffffff" }

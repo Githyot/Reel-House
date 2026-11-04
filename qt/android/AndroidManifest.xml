@@ -20,6 +20,8 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
     <!-- torrents and downloads that go on while another app is in front (a foreground service, later) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <!-- updates of the app (controller_update.rs): the downloaded APK goes to the system installer, which asks the user -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
 
     <!-- phones, tablets and Android TV (the leanback launcher below); none of these is required -->
     <uses-feature android:name="android.hardware.touchscreen" android:required="false"/>
@@ -64,5 +66,14 @@
             <meta-data android:name="android.app.splash_screen_drawable" android:resource="@drawable/splash"/>
             <meta-data android:name="android.app.splash_screen_sticky" android:value="false"/>
         </activity>
+
+        <!-- content:// addresses for files of the app: the APK of an update (Platform::installApk) and files Qt opens
+             with QDesktopServices. The authority is the one Qt uses ("<package>.qtprovider"). -->
+        <provider android:name="androidx.core.content.FileProvider"
+                  android:authorities="org.reelhouse.app.qtprovider"
+                  android:exported="false"
+                  android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/qtprovider_paths"/>
+        </provider>
     </application>
 </manifest>

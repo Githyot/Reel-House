@@ -15,7 +15,7 @@ fn is_image_url(u: &str) -> bool {
 
 /// Finds `name(url)` forms such as `img550(...)`, `img(...)`, `Img220(...)`. Returns (start, end, url).
 fn find_img_call(s: &str) -> Option<(usize, usize, String)> {
-    let lower = s.to_lowercase();
+    let lower = s.to_ascii_lowercase();
     let mut from = 0;
     while let Some(rel) = lower[from..].find("img") {
         let start = from + rel;

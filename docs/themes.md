@@ -18,6 +18,10 @@ applied on top of any theme.
 - `colors.dark` / `colors.light`: the same ~60 names in both sets (window, view, headerbar, card, popover, text, textDim, accent, accentText,
   accentFg, success, warning, error, rating, divider, border, hover, selected, button, buttonHover, chip, fill/fill2/fill3 (Apple tertiary fills),
   sidebarSelected, glassBorder, glassHighlight, …). The manager adds `accent20/25/28/50` and `window0..98` from the accent and window colours.
+  It also checks `accentFg`, `greenFg`, `errorFg` and (new) `warningFg` against their fills (white or black if under 3:1), and adds
+  `successText`, `warningText`, `errorText`: the status colour as words on the window, at 4.5:1. Use the `*Text` ones for
+  words and icons, the plain ones for fills. Colours are `"#rrggbb"` text: use `Qt.alpha(Theme.c.x, a)`, never `Qt.rgba(Theme.c.x.r, …)`
+  (that reads NaN and paints black). 8-digit colours are `#AARRGGBB`.
 - `shape`: small, medium, large, poster, card, pill, border, focusRing, **popover**, **panel** (floating panels), **sheet** (dialogs), control.
 - `elevation`: shadow levels (used by Glass for floating panels).
 - `material`: `kind` = `solid` | `glass`. Glass themes also give `blurMax`, `saturation`, `clearDim` and four levels

@@ -117,7 +117,7 @@ Rectangle {
             width: parent.width
             wrapMode: Text.Wrap
             size: 13
-            color: vp.v.canHear === false ? Theme.c.warning : Theme.c.textDim
+            color: vp.v.canHear === false ? Theme.c.warningText : Theme.c.textDim
             text: vp.v.canHear === false ? vp.tr(vp.v.hearMissing || "") : (vp.v.plan || []).map(function(p) { return vp.tr(p) }).join("  →  ")
         }
 
@@ -161,7 +161,7 @@ Rectangle {
                 size: 13
                 visible: text !== ""
                 readonly property bool bad: !vp.testing && (vp.testError !== "" || (vp.test.error || "") !== "")
-                color: bad ? Theme.c.warning : Theme.c.textDim
+                color: bad ? Theme.c.warningText : Theme.c.textDim
                 text: {
                     if (vp.testing) return vp.tr("Speak now: say a short sentence in the language you study.")
                     if (vp.testError !== "") return vp.testError
@@ -175,7 +175,7 @@ Rectangle {
                 width: parent.width
                 wrapMode: Text.Wrap
                 size: 12
-                color: Theme.c.warning
+                color: Theme.c.warningText
                 visible: !vp.testing && vp.testError === "" && vp.testPeak > 0 && vp.testPeak < 0.3
                 text: vp.tr("The microphone is very quiet: raise its input volume (Windows: Settings > System > Sound > Input).")
             }
@@ -206,7 +206,7 @@ Rectangle {
                 size: 13
                 text: vp.phaseText()
                 dim: !vp.failed
-                color: vp.failed ? Theme.c.error : Theme.c.textDim
+                color: vp.failed ? Theme.c.errorText : Theme.c.textDim
             }
             // the download (the program, then the model)
             Column {
@@ -306,7 +306,7 @@ Rectangle {
             width: parent.width
             wrapMode: Text.Wrap
             size: 12
-            color: Theme.c.warning
+            color: Theme.c.warningText
             text: vp.local.available !== true
                 ? vp.tr("This version has no voices of the computer (Qt TextToSpeech is missing): only Google's online voice can read.")
                 : vp.tr("No voice of this computer speaks the language studied. On Windows: Settings > Time & language > Speech > Add voices.")

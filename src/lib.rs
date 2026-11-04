@@ -1,6 +1,7 @@
 //! Reelhouse core. Everything here uses only the standard library, so it builds and tests anywhere.
 //! The window, the mpv bridge and networking live in the modules gated behind the `app` feature.
 pub mod addons;
+pub mod addon_kind;
 pub mod adblock;
 pub mod browser;
 pub mod anilist;
@@ -48,6 +49,12 @@ pub mod orbs;
 pub mod outline;
 pub mod palette;
 pub mod platform;
+/// IP protection ("VPN inside the app"): proxy, WireGuard and Tor through a local gateway.
+#[cfg(feature = "privacy")]
+pub mod privacy;
+#[cfg(not(feature = "privacy"))]
+#[path = "privacy_off.rs"]
+pub mod privacy;
 pub mod profiles;
 pub mod richtext;
 pub mod settings;
@@ -66,6 +73,7 @@ pub mod torrent;
 #[cfg(feature = "torrent-embed")]
 pub mod torrent_embed;
 pub mod translate;
+pub mod update_delta;
 pub mod updater;
 pub mod uisounds;
 pub mod util;

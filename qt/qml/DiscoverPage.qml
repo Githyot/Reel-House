@@ -12,6 +12,7 @@ Item {
     readonly property var rows: platform === "" ? allRows : allRows.filter(function(r) { return r.platform === page.platform })
     readonly property var hero: (home.hero !== undefined ? home.hero : []).filter(function(h) { return page.platform === "" || h.platform === page.platform }).slice(0, 6)
     readonly property var errors: home.errors !== undefined ? home.errors : []
+    readonly property real gutter: Theme.mobile ? 16 : Theme.spacing.page
 
     Flickable {
         id: scroll
@@ -25,9 +26,10 @@ Item {
 
         Column {
             id: col
-            x: Theme.mobile ? 16 : 18
-            y: 14
-            width: scroll.width - (Theme.mobile ? 32 : 36)
+            // the same gutter as the large title above the page, so the headings line up with it
+            x: page.gutter
+            y: Theme.mobile ? 8 : 14
+            width: scroll.width - 2 * page.gutter
             spacing: Theme.mobile ? 24 : 30
 
             HeroBanner { visible: items.length > 0; width: parent.width; items: page.hero }
@@ -62,27 +64,24 @@ Item {
     // a phone: the page pulled down past its top asks the addons for the catalogs again
     PullToRefresh { target: scroll; onRefresh: Core.cmd({cmd: "load_home"}) }
 
-    // Nothing yet: loading, or the status page of GTK.
-    Column {
+    // Nothing yet: loading, or the status page of GTK (with the way to the addons when nothing came).
+    StatusPage {
         anchors.centerIn: parent
         visible: page.rows.length === 0
-        width: Math.min(parent.width - 60, 640)
-        spacing: 12
-        BusyIndicator { anchors.horizontalCenter: parent.horizontalCenter; visible: page.home.loading === true; running: visible }
-        Text {
-            visible: page.home.loading === true
+        busy: page.home.loading === true
+        mood: page.errors.length > 0 ? "sad" : "sleep"
+        title: busy ? "" : Core.tr(Core.uiLang, "Nothing to show yet")
+        description: busy ? Core.tr(Core.uiLang, "Loading catalogs from your addons") : Core.tr(Core.uiLang, "Check your internet connection, or add addons in Preferences.")
+        Row {
+            visible: page.home.loading !== true
             anchors.horizontalCenter: parent.horizontalCenter
-            text: Core.tr(Core.uiLang, "Loading catalogs from your addons")
-            color: Theme.c.textDim
-            font.pixelSize: 15
-            font.family: Theme.type.family
+            spacing: 10
+            FlatButton { kind: "suggested"; pill: true; text: Core.tr(Core.uiLang, "Addons & accounts"); onClicked: win.openPrefs("addons") }
+            FlatButton { pill: true; text: Core.tr(Core.uiLang, "Try again"); onClicked: Core.cmd({cmd: "load_home"}) }
         }
-        Mascot { visible: page.home.loading !== true; animate: visible; anchors.horizontalCenter: parent.horizontalCenter; size: 120; mood: page.errors.length > 0 ? "sad" : "sleep" }
-        Text { visible: page.home.loading !== true; anchors.horizontalCenter: parent.horizontalCenter; text: Core.tr(Core.uiLang, "Nothing to show yet"); color: Theme.c.text; font.pixelSize: 24; font.weight: Font.ExtraBold; font.family: Theme.type.family }
-        Text { visible: page.home.loading !== true; width: parent.width; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.Wrap; text: Core.tr(Core.uiLang, "Check your internet connection, or add addons in Preferences."); color: Theme.c.textDim; font.pixelSize: 15; font.family: Theme.type.family }
         PrefGroup {
             visible: page.errors.length > 0 && page.home.loading !== true
-            width: parent.width
+            width: Math.min(page.width - 60, 640)
             title: Core.tr(Core.uiLang, "Some addons did not answer")
             Repeater {
                 model: page.errors.slice(0, 6)

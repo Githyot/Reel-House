@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Window
 import QtQuick.Controls
 import QtQuick.Layouts
 import Reelhouse 1.0
@@ -55,6 +56,9 @@ Item {
             verticalAlignment: Image.AlignTop
             horizontalAlignment: Image.AlignHCenter
             url: page.meta.background ? page.meta.background : ""
+            // decoded at the drawn size (x the screen's pixel ratio), not the file's (often 3840 px)
+            sourceSize.width: width > 1 ? Math.ceil(width * Math.max(1, Screen.devicePixelRatio) / 64) * 64 : 0
+            sourceSize.height: height > 1 ? Math.ceil(height * Math.max(1, Screen.devicePixelRatio) / 64) * 64 : 0
         }
         // behind the information column (left) the scrim is thicker than behind the streams
         Rectangle {
@@ -91,6 +95,8 @@ Item {
         y: 0
         width: 40
         height: 60
+        sourceSize.width: 80
+        sourceSize.height: 120
         z: -1
         url: page.meta.background ? page.meta.background : ""
         onStatusChanged: if (status === Image.Ready) moodTimer.restart()
@@ -222,11 +228,11 @@ Item {
                         implicitHeight: 44
                         onClicked: Core.cmd({cmd: "toggle_library", item: page.meta})
                     }
+                    // as tall as the buttons beside it, so the row reads as one group
                     Rectangle {
-                        width: Theme.mobile ? 44 : 34
+                        width: 44
                         height: width
                         radius: width / 2
-                        y: (44 - height) / 2
                         color: favArea.containsMouse ? Theme.c.buttonHover : Theme.c.button
                         // On: a solid yellow star (easy to spot). Off: a hollow star in the text colour.
                         Icon { anchors.centerIn: parent; name: page.meta.favorite ? "star" : "staroutline"; filled: page.meta.favorite === true; size: 20; color: page.meta.favorite ? Theme.c.starEdge : Theme.c.text; fillColor: Theme.c.star }
@@ -628,7 +634,7 @@ Item {
             visible: !!(page.streams && page.streams.errors && page.streams.errors.length > 0 && (page.streams.list || []).length === 0)
             Repeater {
                 model: page.streams && page.streams.errors ? page.streams.errors.slice(0, 5) : []
-                delegate: Text { required property var modelData; width: parent.width; wrapMode: Text.Wrap; text: Core.tr(Core.uiLang, String(modelData)); color: Theme.c.error; font.pixelSize: 13; font.family: Theme.type.family }
+                delegate: Text { required property var modelData; width: parent.width; wrapMode: Text.Wrap; text: Core.tr(Core.uiLang, String(modelData)); color: Theme.c.errorText; font.pixelSize: 13; font.family: Theme.type.family }
             }
         }
     }
