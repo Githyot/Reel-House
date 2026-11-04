@@ -59,7 +59,7 @@ Item {
             width: parent.width
             text: pr.error !== "" ? pr.error : pr.detail
             dim: pr.error === ""
-            color: pr.error !== "" ? Theme.c.error : Theme.c.textDim
+            color: pr.error !== "" ? Theme.c.errorText : Theme.c.textDim
             size: 12
             wrapMode: Text.Wrap
         }

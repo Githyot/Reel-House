@@ -119,7 +119,7 @@ Column {
         width: parent.width; wrapMode: Text.Wrap; size: 13
         visible: text !== ""
         readonly property bool bad: !mt.testing && (mt.error !== "" || (mt.test.error || "") !== "")
-        color: bad ? Theme.c.warning : Theme.c.textDim
+        color: bad ? Theme.c.warningText : Theme.c.textDim
         text: {
             if (mt.testing) return mt.tr("Speak now: say a short sentence in the language you study.")
             if (mt.error !== "") return mt.error
@@ -141,7 +141,7 @@ Column {
         text: mt.note
     }
     Lbl {
-        width: parent.width; wrapMode: Text.Wrap; size: 12; color: Theme.c.warning
+        width: parent.width; wrapMode: Text.Wrap; size: 12; color: Theme.c.warningText
         visible: !mt.testing && mt.error === "" && mt.peak > 0 && mt.peak < 0.3
         text: mt.tr("The microphone is very quiet: raise its input volume (Windows: Settings > System > Sound > Input).")
     }
@@ -150,7 +150,7 @@ Column {
         model: mt.found
         Lbl {
             width: mt.width; size: 12
-            color: modelData.live ? Theme.c.success : Theme.c.textDim
+            color: modelData.live ? Theme.c.successText : Theme.c.textDim
             text: (modelData.live ? "✓ " : "✗ ") + modelData.name + (modelData.isDefault ? "  (" + mt.tr("default") + ")" : "")
                   + "  ·  " + (modelData.live ? mt.tr("sends sound") : mt.tr("only silence"))
         }

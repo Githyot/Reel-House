@@ -271,7 +271,7 @@ Item {
                     width: Math.max(22, scNum.implicitWidth + 12)
                     height: 20
                     radius: 10
-                    color: sc.sel ? Qt.rgba(Theme.c.accent.r, Theme.c.accent.g, Theme.c.accent.b, 0.18) : Theme.c.fill3
+                    color: sc.sel ? Qt.alpha(Theme.c.accent, 0.18) : Theme.c.fill3
                     Text {
                         id: scNum
                         anchors.centerIn: parent
@@ -373,9 +373,9 @@ Item {
                 ScrollBar.vertical: ScrollBar {}
                 CoverGrid {
                     id: libGrid
-                    x: 24
+                    x: Theme.mobile ? 16 : Theme.spacing.page
                     y: 4
-                    width: libFlick.width - 48
+                    width: libFlick.width - 2 * x
                     model: root.shownLibrary
                     showUnread: true
                     onOpened: function(item) { root.openSeries(item) }
@@ -398,6 +398,7 @@ Item {
                 visible: root.shownLibrary.length === 0
                 anchors.centerIn: parent
                 icon: "bookmark"
+                mood: "think"
                 title: root.library.length === 0 ? root.tr("Your library is empty") : root.tr("Nothing here")
                 description: root.library.length === 0 ? root.tr("Find a title in Explore and add it to the library.") : root.tr("No title matches this category or search.")
             }
@@ -544,9 +545,9 @@ Item {
                 ScrollBar.vertical: ScrollBar {}
                 Column {
                     id: brCol
-                    x: 24
+                    x: Theme.mobile ? 16 : Theme.spacing.page
                     y: 4
-                    width: brFlick.width - 48
+                    width: brFlick.width - 2 * x
                     spacing: 16
                     CoverGrid {
                         width: parent.width
@@ -560,7 +561,7 @@ Item {
                         // "The Suwayomi server is starting…" is a wait, not an error: the list comes by itself
                         readonly property bool waiting: (root.lst.error || "") === "The Suwayomi server is starting…"
                         text: root.lst.loading ? root.tr("Loading…") : (root.lst.error ? root.tr(root.lst.error) : ((root.lst.items || []).length === 0 ? root.tr("Nothing found.") : ""))
-                        color: root.lst.error && !root.lst.loading && !waiting ? Theme.c.error : Theme.c.textDim
+                        color: root.lst.error && !root.lst.loading && !waiting ? Theme.c.errorText : Theme.c.textDim
                         wrapMode: Text.Wrap
                         width: Math.min(implicitWidth, parent.width)
                         horizontalAlignment: Text.AlignHCenter
@@ -677,6 +678,7 @@ Item {
         visible: root.tab === "history" && (root.st.history || []).length === 0
         anchors.centerIn: parent
         icon: "history"
+        mood: "sleep"
         title: root.tr("Nothing read yet")
         description: root.tr("The chapters you open show up here.")
     }

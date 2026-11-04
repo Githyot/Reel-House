@@ -97,6 +97,8 @@ void shutdown() {}
 #include <QJsonDocument>
 
 #include "bridge.h"   // the ad blocker of the core (rh_adblock_check / rh_adblock_css)
+// The IP protection gateway's port Chromium was started with (its proxy cannot change later); -1 = not started.
+static int g_cefProxyPort = -1;
 
 // How references work in CEF's C API (the rules the C++ wrapper follows):
 //  - a struct that CEF passes to one of our callbacks comes with a reference for us: we release it when done;
@@ -760,7 +762,10 @@ Tab::Tab() {
     request.cef.get_resource_request_handler = [](cef_request_handler_t *, cef_browser_t *b, cef_frame_t *f, cef_request_t *req, int, int isDownload, const cef_string_t *initiator, int *) -> cef_resource_request_handler_t * {
         bool block = false;
         const cef_resource_type_t type = req->get_resource_type(req);
-        if (!isDownload && type != RT_MAIN_FRAME && E && !E->down) {
+        // IP protection changed after Chromium started (its proxy is fixed at start): nothing goes out until the
+        // app is opened again, so the address is never shown (kill switch)
+        if (E && !E->down && rh_privacy_port() != g_cefProxyPort) block = true;
+        else if (!isDownload && type != RT_MAIN_FRAME && E && !E->down) {
             const QString url = freeStr(req->get_url(req));
             // the page the request belongs to: the tab's page (an allowed site is a whole page, as in uBlock)
             QString source;
@@ -804,6 +809,14 @@ void CEF_CALLBACK onBeforeCommandLine(cef_app_t *, const cef_string_t *processTy
     if (processType && processType->length) return;   // only the browser process
     auto sw = [cl](const char *name) { CStr n(QString::fromLatin1(name)); cl->append_switch(cl, n.p()); };
     auto swv = [cl](const char *name, const QString &v) { CStr n(QString::fromLatin1(name)), val(v); cl->append_switch_with_value(cl, n.p(), val.p()); };
+    // IP protection (src/privacy.rs): the pages go through the core's gateway (SOCKS5, names resolved there), and
+    // WebRTC may not open UDP around it (it would show the real address)
+    g_cefProxyPort = rh_privacy_port();
+    if (g_cefProxyPort > 0) {
+        swv("proxy-server", QStringLiteral("socks5://127.0.0.1:%1").arg(g_cefProxyPort));
+        swv("proxy-bypass-list", QStringLiteral("<-loopback>"));
+        swv("force-webrtc-ip-handling-policy", QStringLiteral("disable_non_proxied_udp"));
+    }
     // without the sandbox (it needs a special build of the program on Windows)
     sw("no-sandbox");
 #ifdef Q_OS_LINUX
@@ -817,7 +830,10 @@ void CEF_CALLBACK onBeforeCommandLine(cef_app_t *, const cef_string_t *processTy
     }
     // Chrome's own "Translate this page?", sign-in and first-run prompts have no window here; its AI models and
     // components (hundreds of MB in the profile) are not needed by these pages
-    swv("disable-features", QStringLiteral("Translate,MediaRouter,DialMediaRouteProvider,OptimizationGuideModelDownloading,OptimizationHintsFetching,OptimizationTargetPrediction,OptimizationHints"));
+    swv("disable-features", QStringLiteral("Translate,MediaRouter,DialMediaRouteProvider,OptimizationGuideModelDownloading,OptimizationHintsFetching,OptimizationTargetPrediction,OptimizationHints,BackForwardCache,SpareRendererForSitePerProcess"));
+    // Memory: pages left behind are not kept alive for the Back button (BackForwardCache), no spare page process is
+    // started ahead of time, and tabs of the same site share processes (at most 4 page processes; sites stay isolated)
+    swv("renderer-process-limit", QStringLiteral("4"));
     sw("disable-component-update");
     sw("no-first-run");
     sw("no-default-browser-check");

@@ -153,43 +153,50 @@ Column {
         ColorRow { title: Core.tr(Core.uiLang, "Text color"); value: sp.st.text_color || "#ffffff"; onChosen: function(h) { sp.style("text_color", h) } }
         PrefSpin { title: Core.tr(Core.uiLang, "Text opacity"); subtitle: Core.tr(Core.uiLang, "Percent"); from: 0; to: 100; step: 5; value: sp.st.text_opacity !== undefined ? sp.st.text_opacity : 100; onMoved: function(v) { sp.style("text_opacity", v) } }
     }
-    PrefGroup {
-        title: Core.tr(Core.uiLang, "Outline, shadow and background")
-        collapsible: true
-        ColorRow { title: Core.tr(Core.uiLang, "Outline color"); value: sp.st.border_color || "#000000"; onChosen: function(h) { sp.style("border_color", h) } }
-        PrefSpin { title: Core.tr(Core.uiLang, "Outline width"); from: 0; to: 8; step: 0.5; value: sp.st.border_size || 0; onMoved: function(v) { sp.style("border_size", v) } }
-        ColorRow { title: Core.tr(Core.uiLang, "Shadow color"); value: sp.st.shadow_color || "#000000"; onChosen: function(h) { sp.style("shadow_color", h) } }
-        PrefSpin { title: Core.tr(Core.uiLang, "Shadow distance"); from: 0; to: 6; step: 0.5; value: sp.st.shadow_offset || 0; onMoved: function(v) { sp.style("shadow_offset", v) } }
-        PrefSwitch { title: Core.tr(Core.uiLang, "Background box"); subtitle: Core.tr(Core.uiLang, "A solid box behind the text, like VLC"); checked: sp.st.bg_enabled === true; onToggled: function(on) { sp.style("bg_enabled", on) } }
-        ColorRow { title: Core.tr(Core.uiLang, "Background color"); value: sp.st.bg_color || "#000000"; onChosen: function(h) { sp.style("bg_color", h) } }
-        PrefSpin { title: Core.tr(Core.uiLang, "Background opacity"); subtitle: Core.tr(Core.uiLang, "Percent"); from: 0; to: 100; step: 5; value: sp.st.bg_opacity || 0; onMoved: function(v) { sp.style("bg_opacity", v) } }
-        PrefSpin { title: Core.tr(Core.uiLang, "Vertical position"); subtitle: Core.tr(Core.uiLang, "0 is the top, 100 is the bottom"); from: 0; to: 100; value: sp.st.position !== undefined ? sp.st.position : 90; onMoved: function(v) { sp.style("position", v) } }
-        PrefSwitch { title: Core.tr(Core.uiLang, "Override the subtitle’s own style"); subtitle: Core.tr(Core.uiLang, "Also restyle subtitles that bring their own fonts and colors"); checked: sp.st.force_style === true; onToggled: function(on) { sp.style("force_style", on) } }
-    }
-
-    // ---------- Karaoke ----------
-    SectionHead { title: Core.tr(Core.uiLang, "Karaoke"); icon: "audio" }
-    PrefGroup {
-        title: Core.tr(Core.uiLang, "Karaoke")
-        description: Core.tr(Core.uiLang, "Anime only: while an opening or ending plays, the lyrics of the song (Karaoke Mugen) appear as a second subtitle. Your own subtitle is not touched, and the subtitle style does not change the karaoke. Needs the opening/ending times (AniSkip or the chapters of the file).")
-        PrefButton { first: true; title: Core.tr(Core.uiLang, "Karaoke studio"); subtitle: Core.tr(Core.uiLang, "Every setting of the lyrics in one window, with a live preview: font, colours, border, place, margins and timing"); label: Core.tr(Core.uiLang, "Open…"); kind: "suggested"; onActivated: studio.open() }
-        PrefSwitch { title: Core.tr(Core.uiLang, "Karaoke on openings and endings"); subtitle: Core.tr(Core.uiLang, "The player's Subtitles menu says what was found for each episode"); checked: sp.g.karaoke === true; onToggled: function(on) { sp.dlg.set("general.karaoke", on) } }
-    }
-    PrefGroup {
-        id: kLook
-        readonly property string col: sp.g.karaoke_color || ""
-        title: Core.tr(Core.uiLang, "Timing and look")
-        collapsible: true
-        description: Core.tr(Core.uiLang, "Changes show at once while the lyrics are on screen.")
-        PrefSpin { title: Core.tr(Core.uiLang, "Delay"); subtitle: Core.tr(Core.uiLang, "Seconds added to the start of the lyrics. Negative shows them earlier, positive later. Only use it for a karaoke that is out of step"); from: -15; to: 15; step: 0.1; value: sp.g.karaoke_delay || 0; onMoved: function(v) { sp.dlg.set("general.karaoke_delay", Math.round(v * 10) / 10) } }
-        PrefSwitch { title: Core.tr(Core.uiLang, "At the top of the screen"); subtitle: Core.tr(Core.uiLang, "Away from your subtitle, which stays at the bottom"); checked: sp.g.karaoke_top === true; onToggled: function(on) { sp.dlg.set("general.karaoke_top", on) } }
-        PrefSpin { title: Core.tr(Core.uiLang, "Size"); subtitle: Core.tr(Core.uiLang, "Percentage of the size the file asks for"); from: 40; to: 250; step: 5; value: sp.g.karaoke_size || 100; onMoved: function(v) { sp.dlg.set("general.karaoke_size", v) } }
-        PrefButton {
-            title: Core.tr(Core.uiLang, "Colours, font, outline and margins")
-            subtitle: Core.tr(Core.uiLang, "In the Karaoke studio, with a live preview")
-            label: Core.tr(Core.uiLang, "Open")
-            onActivated: studio.open()
+    PrefsAdvanced { dlg: sp.dlg }
+    Column {
+        visible: sp.dlg ? sp.dlg.adv : false
+        width: parent.width
+        spacing: 26
+        PrefGroup {
+            title: Core.tr(Core.uiLang, "Outline, shadow and background")
+            collapsible: true
+            ColorRow { title: Core.tr(Core.uiLang, "Outline color"); value: sp.st.border_color || "#000000"; onChosen: function(h) { sp.style("border_color", h) } }
+            PrefSpin { title: Core.tr(Core.uiLang, "Outline width"); from: 0; to: 8; step: 0.5; value: sp.st.border_size || 0; onMoved: function(v) { sp.style("border_size", v) } }
+            ColorRow { title: Core.tr(Core.uiLang, "Shadow color"); value: sp.st.shadow_color || "#000000"; onChosen: function(h) { sp.style("shadow_color", h) } }
+            PrefSpin { title: Core.tr(Core.uiLang, "Shadow distance"); from: 0; to: 6; step: 0.5; value: sp.st.shadow_offset || 0; onMoved: function(v) { sp.style("shadow_offset", v) } }
+            PrefSwitch { title: Core.tr(Core.uiLang, "Background box"); subtitle: Core.tr(Core.uiLang, "A solid box behind the text, like VLC"); checked: sp.st.bg_enabled === true; onToggled: function(on) { sp.style("bg_enabled", on) } }
+            ColorRow { title: Core.tr(Core.uiLang, "Background color"); value: sp.st.bg_color || "#000000"; onChosen: function(h) { sp.style("bg_color", h) } }
+            PrefSpin { title: Core.tr(Core.uiLang, "Background opacity"); subtitle: Core.tr(Core.uiLang, "Percent"); from: 0; to: 100; step: 5; value: sp.st.bg_opacity || 0; onMoved: function(v) { sp.style("bg_opacity", v) } }
+            PrefSpin { title: Core.tr(Core.uiLang, "Vertical position"); subtitle: Core.tr(Core.uiLang, "0 is the top, 100 is the bottom"); from: 0; to: 100; value: sp.st.position !== undefined ? sp.st.position : 90; onMoved: function(v) { sp.style("position", v) } }
+            PrefSwitch { title: Core.tr(Core.uiLang, "Override the subtitle’s own style"); subtitle: Core.tr(Core.uiLang, "Also restyle subtitles that bring their own fonts and colors"); checked: sp.st.force_style === true; onToggled: function(on) { sp.style("force_style", on) } }
         }
+
+        // ---------- Karaoke ----------
+        SectionHead { title: Core.tr(Core.uiLang, "Karaoke"); icon: "audio" }
+        PrefGroup {
+            title: Core.tr(Core.uiLang, "Karaoke")
+            description: Core.tr(Core.uiLang, "Anime only: while an opening or ending plays, the lyrics of the song (Karaoke Mugen) appear as a second subtitle. Your own subtitle is not touched, and the subtitle style does not change the karaoke. Needs the opening/ending times (AniSkip or the chapters of the file).")
+            PrefButton { first: true; title: Core.tr(Core.uiLang, "Karaoke studio"); subtitle: Core.tr(Core.uiLang, "Every setting of the lyrics in one window, with a live preview: font, colours, border, place, margins and timing"); label: Core.tr(Core.uiLang, "Open…"); kind: "suggested"; onActivated: studio.open() }
+            PrefSwitch { title: Core.tr(Core.uiLang, "Karaoke on openings and endings"); subtitle: Core.tr(Core.uiLang, "The player's Subtitles menu says what was found for each episode"); checked: sp.g.karaoke === true; onToggled: function(on) { sp.dlg.set("general.karaoke", on) } }
+        }
+        PrefGroup {
+            id: kLook
+            readonly property string col: sp.g.karaoke_color || ""
+            title: Core.tr(Core.uiLang, "Timing and look")
+            collapsible: true
+            description: Core.tr(Core.uiLang, "Changes show at once while the lyrics are on screen.")
+            PrefSpin { title: Core.tr(Core.uiLang, "Delay"); subtitle: Core.tr(Core.uiLang, "Seconds added to the start of the lyrics. Negative shows them earlier, positive later. Only use it for a karaoke that is out of step"); from: -15; to: 15; step: 0.1; value: sp.g.karaoke_delay || 0; onMoved: function(v) { sp.dlg.set("general.karaoke_delay", Math.round(v * 10) / 10) } }
+            PrefSwitch { title: Core.tr(Core.uiLang, "At the top of the screen"); subtitle: Core.tr(Core.uiLang, "Away from your subtitle, which stays at the bottom"); checked: sp.g.karaoke_top === true; onToggled: function(on) { sp.dlg.set("general.karaoke_top", on) } }
+            PrefSpin { title: Core.tr(Core.uiLang, "Size"); subtitle: Core.tr(Core.uiLang, "Percentage of the size the file asks for"); from: 40; to: 250; step: 5; value: sp.g.karaoke_size || 100; onMoved: function(v) { sp.dlg.set("general.karaoke_size", v) } }
+            PrefButton {
+                title: Core.tr(Core.uiLang, "Colours, font, outline and margins")
+                subtitle: Core.tr(Core.uiLang, "In the Karaoke studio, with a live preview")
+                label: Core.tr(Core.uiLang, "Open")
+                onActivated: studio.open()
+            }
+        }
+
     }
 
     KaraokeStudio { id: studio }

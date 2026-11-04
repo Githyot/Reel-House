@@ -94,7 +94,7 @@ pub fn pool(kind: &str) -> &'static [(&'static str, &'static str)] {
             ("Finish line ahead", "{n} more and today's quest is yours."),
         ],
         "idle" => &[
-            ("The macaw is waiting", "It's been {n} days. I saved you a seat (and a can)."),
+            ("Arara is waiting", "It's been {n} days. I saved you a seat (and a can)."),
             ("Long time no see", "{n} days without studying. Even one lesson counts. No pressure."),
             ("I'm still here", "Just checking in. A two-minute lesson is a great way back."),
             ("Miss you!", "{n} days off. Want to start small today?"),

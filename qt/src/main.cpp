@@ -29,6 +29,9 @@
 #include <QKeyEvent>
 #include <clocale>
 #include <cstdio>
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
 #include "corebridge.h"
 #include "thememanager.h"
 #include "videoitem.h"
@@ -296,6 +299,28 @@ int main(int argc, char *argv[]) {
     if (engine.rootObjects().isEmpty()) { qCritical() << "QML failed to load"; return 1; }
     // The safe area follows the main window (orientation, keyboard).
     if (auto *w = qobject_cast<QWindow *>(engine.rootObjects().first())) platform.attach(w);
+    // Memory: when the window is minimized or the app goes to the background (Android), the QML engine collects its
+    // garbage, drops cached components and the scene graph's spare resources, and (Linux/glibc) freed memory goes back
+    // to the system. Two seconds later, so a quick Alt+Tab does nothing.
+    if (auto *qw = qobject_cast<QQuickWindow *>(engine.rootObjects().first())) {
+        auto *trim = new QTimer(qw);
+        trim->setSingleShot(true);
+        trim->setInterval(2000);
+        QObject::connect(trim, &QTimer::timeout, qw, [qw, &engine] {
+            const bool away = qw->visibility() == QWindow::Minimized || qw->visibility() == QWindow::Hidden
+                || QGuiApplication::applicationState() == Qt::ApplicationHidden || QGuiApplication::applicationState() == Qt::ApplicationSuspended;
+            if (!away) return;
+            engine.collectGarbage();
+            engine.trimComponentCache();
+            qw->releaseResources();
+#if defined(__GLIBC__)
+            malloc_trim(0);
+#endif
+            qInfo("[memory] window away: QML garbage collected, caches released");
+        });
+        QObject::connect(qw, &QWindow::visibilityChanged, trim, [trim](QWindow::Visibility) { trim->start(); });
+        QObject::connect(qApp, &QGuiApplication::applicationStateChanged, trim, [trim](Qt::ApplicationState) { trim->start(); });
+    }
 #ifdef Q_OS_WIN
     // A full-screen OpenGL window covering the whole monitor gets the "independent flip" of Windows: the video
     // bypasses the desktop compositor, so recording or sharing the screen (OBS, Discord, Game Bar) shows a frozen

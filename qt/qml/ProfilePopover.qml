@@ -295,7 +295,7 @@ Popover {
             width: parent.width
             height: confirmCol.implicitHeight + 20
             radius: Theme.shape.small
-            color: Theme.c.errorBg !== undefined ? Qt.rgba(Theme.c.errorBg.r, Theme.c.errorBg.g, Theme.c.errorBg.b, 0.18) : Theme.c.fill3
+            color: Theme.c.errorBg !== undefined ? Qt.alpha(Theme.c.errorBg, 0.18) : Theme.c.fill3
             border.width: 1
             border.color: Theme.c.error
             Column {

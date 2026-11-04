@@ -852,9 +852,22 @@ impl Collection {
                     }
                 }
             }
-            for d in t.decks.iter_mut() {
-                while self.decks.iter().any(|y| y.id == d.id) {
-                    d.id += 1;
+            // a deck id taken meanwhile gets a new one, and its cards follow it (they would land in the other deck)
+            let mut moved: HashMap<i64, i64> = HashMap::new();
+            for k in 0..t.decks.len() {
+                let old = t.decks[k].id;
+                let mut id = old;
+                while self.decks.iter().any(|y| y.id == id) || t.decks.iter().enumerate().any(|(j, y)| j != k && y.id == id) {
+                    id += 1;
+                }
+                if id != old {
+                    t.decks[k].id = id;
+                    moved.insert(old, id);
+                }
+            }
+            for c in t.cards.iter_mut() {
+                if let Some(id) = moved.get(&c.did) {
+                    c.did = *id;
                 }
             }
         }
@@ -2080,10 +2093,14 @@ mod tests2 {
         col.delete_deck(did, now);
         assert!(col.decks.iter().all(|d| d.id != did));
         assert_eq!(col.cards.iter().filter(|c| c.nid == nid).count(), 0);
-        col.create_deck(&name).unwrap();
+        let taken = col.create_deck(&name).unwrap();
+        // the new deck even took the old id: the cards must still follow their own deck
+        col.decks.iter_mut().find(|d| d.id == taken).unwrap().id = did;
         col.restore(0).unwrap();
-        assert!(col.decks.iter().any(|d| d.name == format!("{} (restored)", name)));
+        let restored = col.decks.iter().find(|d| d.name == format!("{} (restored)", name)).map(|d| d.id).unwrap();
+        assert_ne!(restored, did);
         assert_eq!(col.cards.iter().filter(|c| c.nid == nid).count(), 3);
+        assert!(col.cards.iter().filter(|c| c.nid == nid).all(|c| c.did == restored));
     }
 }
 

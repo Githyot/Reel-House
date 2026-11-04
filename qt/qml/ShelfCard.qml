@@ -40,14 +40,14 @@ Item {
         width: Math.max(20, ub.implicitWidth + 12)
         radius: 10
         color: Theme.c.success
-        Lbl { id: ub; anchors.centerIn: parent; text: card.unread; color: "#ffffff"; bold: true; size: 12 }
+        Lbl { id: ub; anchors.centerIn: parent; text: card.unread; color: Theme.c.greenFg; bold: true; size: 12 }
     }
     Rectangle {
         visible: card.inLibrary && card.unread === 0
         anchors { right: cov.right; top: cov.top; margins: 6 }
         width: 20; height: 20; radius: 10
         color: Theme.c.success
-        Icon { anchors.centerIn: parent; name: "check"; size: 13; color: "#ffffff" }
+        Icon { anchors.centerIn: parent; name: "check"; size: 13; color: Theme.c.greenFg }
     }
     Lbl {
         anchors { left: parent.left; right: parent.right; top: cov.bottom; topMargin: 8 }

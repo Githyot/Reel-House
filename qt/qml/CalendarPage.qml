@@ -74,7 +74,7 @@ Item {
                             required property var modelData
                             width: dayCol.width
                             height: 64
-                            radius: 8
+                            radius: Theme.shape.small
                             color: dayRow.containsMouse ? Theme.c.hover : "transparent"
                             RoundedPicture { id: dpic; x: 6; anchors.verticalCenter: parent.verticalCenter; width: 36; height: 52; radius: 5; url: modelData.poster ? modelData.poster : "" }
                             Column {
@@ -118,9 +118,9 @@ Item {
 
         Column {
             id: col
-            x: Math.max(18, (scroll.width - 1100) / 2)
+            x: Math.max(Theme.mobile ? 16 : Theme.spacing.page, (scroll.width - 1100) / 2)
             y: 14
-            width: Math.min(1100, scroll.width - 36)
+            width: Math.min(1100, scroll.width - 2 * (Theme.mobile ? 16 : Theme.spacing.page))
             spacing: 10
 
             Item {
@@ -213,7 +213,7 @@ Item {
                 visible: page.upcoming.length > 0
                 width: parent.width
                 height: upCol.implicitHeight
-                radius: 12
+                radius: Theme.shape.card
                 color: Theme.c.card
                 border.width: 1
                 border.color: Theme.c.divider

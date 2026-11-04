@@ -128,6 +128,8 @@ pub mod timetrack;
 pub mod controller_time;
 #[path = "controller_net.rs"]
 pub mod controller_net;
+#[path = "controller_privacy.rs"]
+pub mod controller_privacy;
 use crate::{anime4k, substyle, translate, util};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -242,6 +244,8 @@ pub enum Event {
 }
 
 pub enum Msg {
+    /// IP protection: a Cloudflare WARP tunnel made (its wg-quick file) or why not (controller_privacy.rs).
+    PrivacyWarp(Result<String, String>),
     Row(u64, usize, Row),
     HomeError(u64, String),
     HomeDone(u64),
@@ -249,6 +253,8 @@ pub enum Msg {
     SearchDone(u64),
     Manifests(Vec<AddonEntry>, Vec<String>),
     AddonInstalled(Result<(Vec<AddonEntry>, String), String>),
+    /// The one addon box of Preferences: the link and the mode its answer belongs to.
+    AddonKind(String, Option<crate::addon_kind::Kind>),
     Meta(u64, Option<MetaItem>),
     Art(u64, Art),
     Streams(u64, Vec<Stream>, Vec<String>),
@@ -363,6 +369,10 @@ pub enum Msg {
     DlAdded(Result<Download, String>, String),
     DlProgress(String, f64, Vec<usize>, bool),
     DlRemoved(String, bool),
+    /// A watched episode's file was deleted (info hash of its torrent).
+    DlPurged(String),
+    /// The cache limit freed this many bytes.
+    DlEvicted(u64),
 }
 
 pub struct StreamsState {
@@ -452,6 +462,9 @@ pub struct Session {
     pub torrent: Option<(String, u64, String)>,
     /// Already counted as watched.
     pub marked: bool,
+    /// The file of this episode in the torrents folder, noted when it was watched to the end:
+    /// deleted once the player lets go of it (controller_dl).
+    pub finished: Option<controller_dl::Finished>,
     pub next_dismissed: bool,
     pub next_started: bool,
     pub meta: Option<MetaItem>,
@@ -709,6 +722,8 @@ fn ensure_engine(
     status: &dyn Fn(String),
 ) -> Result<String, String> {
     // Android: the engine runs inside the app (no program to download or start).
+    // IP protection: Tor refuses torrents unless allowed; a tunnel that does not work stops them (kill switch)
+    crate::privacy::torrent_allowed()?;
     #[cfg(feature = "torrent-embed")]
     {
         let _ = (rqbit_exe, runtime_dir);
@@ -735,11 +750,15 @@ fn ensure_engine(
         let mut last = String::new();
         for attempt in 0..3 {
             let port = free_port()?;
-            let extra: Vec<String> = match attempt {
+            let mut extra: Vec<String> = match attempt {
                 0 => vec![],
+                // with IP protection nothing listens, so no other peer port is needed
+                1 if crate::privacy::active() => vec![],
                 1 => vec!["--listen-port".to_string(), free_port()?.to_string()],
                 _ => vec!["--ipv4-only".to_string()],
             };
+            // IP protection: peers only through the tunnel (SOCKS5), no DHT, UPnP, local discovery or listening
+            extra.extend(crate::privacy::rqbit_args());
             let started = RqbitProcess::start(&exe, dl_dir, port, &extra).and_then(|mut p| p.wait_ready(http, 20).map(|_| p));
             match started {
                 Ok(p) => {
@@ -1112,6 +1131,7 @@ impl Core {
                 s.marked = true;
             }
             self.mark_watched(&sid);
+            self.dl_note_finished();
         }
         // (two fields, not a clone of the whole General: this runs on every tick of the player)
         let (autoplay_next, next_popup_secs) = (self.settings.general.autoplay_next, self.settings.general.next_popup_secs);
@@ -1445,7 +1465,7 @@ impl Core {
                 let picked = streams::autoplay_pick(&list, cur_stream.as_ref(), None, rule.as_ref());
                 let cur_res = cur_stream.as_ref().map(|x| x.res).unwrap_or(0);
                 if rule.is_none() && cur_res != 0 && list[picked].res != cur_res {
-                    list.iter().position(|s| s.res == cur_res).unwrap_or(picked)
+                    list.iter().position(|s| s.res == cur_res && s.is_playable()).unwrap_or(picked)
                 } else {
                     picked
                 }
@@ -1748,6 +1768,7 @@ impl Core {
         c.refresh_mal_list();
         c.load_taste();
         c.dl_resume_all();
+        c.dl_startup_cleanup();
         // the course of the study language, read in the background: its words cut subtitle lines into words
         c.learn_ensure();
         c
@@ -2359,6 +2380,10 @@ impl Core {
                 self.load_home();
                 self.home_errors.extend(errors);
             }
+            Msg::AddonKind(text, kind) => match kind {
+                Some(k) => self.add_addon_as(&text, k),
+                None => self.events.push(Event::Info(MsgKind::Addon, crate::addon_kind::UNKNOWN.to_string())),
+            },
             Msg::AddonInstalled(r) => match r {
                 Ok((entries, name)) => {
                     self.settings.addons = entries;
@@ -2532,6 +2557,7 @@ impl Core {
             Msg::MangaCounts(c) => self.on_manga_counts(c),
             Msg::SuwayomiSources(r) => self.on_suwayomi_sources(r),
             Msg::SuwayomiExts(r) => self.on_suwayomi_exts(r),
+            Msg::PrivacyWarp(r) => self.on_privacy_warp(r),
             Msg::SuwayomiDone(t) => self.on_suwayomi_done(t),
             Msg::SuwayomiStatus(t) => {
                 crate::debug::log("suwayomi", &t);
@@ -2606,6 +2632,14 @@ impl Core {
             Msg::DlStreams(g, l, e) => self.on_dl_streams(g, l, e),
             Msg::DlAdded(r, h) => self.on_dl_added(r, h),
             Msg::DlProgress(h, p, d, c) => self.on_dl_progress(h, p, d, c),
+            Msg::DlPurged(hash) => self.on_dl_purged(hash),
+            Msg::DlEvicted(freed) => {
+                if freed > 0 {
+                    self.toast(&format!("Cache limit: freed {}.", torrent::human_bytes(freed)));
+                }
+                self.events.push(Event::Downloads);
+                self.events.push(Event::Detail);
+            }
             Msg::DlRemoved(text, restart) => {
                 self.toast(&text);
                 self.events.push(Event::Downloads);
@@ -2792,6 +2826,8 @@ impl Core {
         self.kaiwa_release();
         // a dub streamed for the last episode stops downloading
         self.dub_drop();
+        // the episode that was playing, if it was watched to the end, leaves the disk (not when the same one starts again)
+        let finished = self.session.as_mut().filter(|s| s.sid != sid).and_then(|s| s.finished.take());
         self.token_counter += 1;
         self.session = Some(Session {
             id: self.token_counter,
@@ -2826,6 +2862,7 @@ impl Core {
             chapters: vec![],
             torrent: None,
             marked: false,
+            finished: None,
             next_dismissed: false,
             next_started: false,
             meta: None,
@@ -2835,6 +2872,9 @@ impl Core {
             theme: Default::default(),
             xray: Default::default(),
         });
+        if let Some(f) = finished {
+            self.dl_purge(f);
+        }
         if let Some(s) = self.session.as_mut() {
             s.meta = self.detail.as_ref().map(|d| {
                 let mut m = d.meta.clone();
@@ -3115,7 +3155,23 @@ impl Core {
         }
         let _ = mpv.set("pause", "yes");
         let _ = mpv.set("demuxer-readahead-secs", &format!("{}", (g.buffer_seconds * 3).max(30)));
-        let _ = mpv.set("demuxer-max-bytes", "512MiB");
+        // What mpv reads ahead is kept in a file on the disk, not in memory (it was up to 512 MB + 50 MB behind in
+        // RAM). A phone keeps a smaller buffer in memory (its libmpv and storage vary too much for the disk cache).
+        if cfg!(target_os = "android") {
+            let _ = mpv.set("demuxer-max-bytes", "96MiB");
+            let _ = mpv.set("demuxer-max-back-bytes", "24MiB");
+        } else {
+            let dir = self.data_dir.join("cache").join("mpv");
+            if std::fs::create_dir_all(&dir).is_ok() {
+                let _ = mpv.set("cache-dir", &dir.to_string_lossy());
+                let _ = mpv.set("cache-on-disk", "yes");
+                let _ = mpv.set("demuxer-max-bytes", "512MiB");
+                let _ = mpv.set("demuxer-max-back-bytes", "128MiB");
+            } else {
+                let _ = mpv.set("demuxer-max-bytes", "192MiB");
+                let _ = mpv.set("demuxer-max-back-bytes", "32MiB");
+            }
+        }
         let _ = mpv.set("start", &if s.start_pos > 1.0 { format!("{:.1}", s.start_pos) } else { "none".to_string() });
         let _ = mpv.set("http-header-fields", &crate::mpv::header_list(&res.headers));
         let _ = mpv.set("sub-visibility", "yes");
@@ -3391,14 +3447,20 @@ impl Core {
         self.save_progress_now();
         self.prefetch = None;
         self.preresolved = None;
-        if let Some(s) = self.session.take() {
+        let finished = self.session.take().and_then(|s| {
             s.cancel.store(true, Ordering::SeqCst);
-        }
+            s.finished
+        });
         self.dub_drop();
         self.stop_thumbs();
         if let Some(m) = &self.mpv {
             let _ = m.cmd(&["stop"]);
         }
+        // the episode watched to the end leaves the disk, and the cache goes back under its limit
+        if let Some(f) = finished {
+            self.dl_purge(f);
+        }
+        self.dl_enforce_limit();
         // the opening / ending video of the X-Ray would go on playing
         self.theme_stop_quiet();
         // what belonged to this video: the clock, and the study hint shown over its subtitles
@@ -3475,6 +3537,48 @@ impl Core {
         });
     }
 
+    /// The one addon box of Preferences > Addons & accounts: a video addon, a repository of manga / comic
+    /// extensions or a list of novel plugins. `kind` is "auto" (found out from the link, or from its answer) or a mode.
+    pub fn add_any_addon(&mut self, text: &str, kind: &str) {
+        use crate::addon_kind::{self, Kind};
+        let text = text.trim().to_string();
+        if text.is_empty() {
+            self.events.push(Event::Info(MsgKind::Addon, "Paste the link of the addon.".to_string()));
+            return;
+        }
+        if let Some(k) = Kind::from_id(kind).or_else(|| addon_kind::guess(&text)) {
+            self.add_addon_as(&text, k);
+            return;
+        }
+        self.events.push(Event::Info(MsgKind::Addon, "Reading the link…".to_string()));
+        self.spawn(move |tx, http| {
+            let url = if text.starts_with("http://") || text.starts_with("https://") { text.clone() } else { format!("https://{}", text) };
+            let kind = crate::http::get_json(&*http, &url, 30).ok().and_then(|j| addon_kind::classify(&j));
+            send(tx, Msg::AddonKind(text, kind));
+        });
+    }
+
+    pub fn add_addon_as(&mut self, text: &str, kind: crate::addon_kind::Kind) {
+        use crate::addon_kind::Kind;
+        crate::debug::log("addons", &format!("add {:?}: {}", kind, text));
+        match kind {
+            Kind::Video => self.install_addon(text),
+            Kind::Images => {
+                let msg = match self.suwayomi_add_repo(text) {
+                    Ok(()) => "Added to Images: its sources are in Images > Sources.".to_string(),
+                    Err(e) => e,
+                };
+                self.events.push(Event::Info(MsgKind::Addon, msg));
+            }
+            Kind::Text => {
+                self.settings.general.text_repo = text.to_string();
+                self.save_settings();
+                self.novel_load_catalog();
+                self.events.push(Event::Info(MsgKind::Addon, "Added to Text: its sources are in Text > Sources.".to_string()));
+            }
+        }
+    }
+
     pub fn remove_addon(&mut self, url: &str) {
         self.settings.addons.retain(|a| a.url != url);
         self.save_settings();
@@ -3537,6 +3641,13 @@ impl Core {
         self.kaiwa_live_shutdown();
         // the last seconds of study time
         self.time_flush();
+        // where the readers are (written only every few pages while reading)
+        if self.manga_reader.is_some() {
+            self.save_manga();
+        }
+        if self.novel_reader.is_some() {
+            self.save_novels();
+        }
         let _ = self.settings.save(&self.data_dir);
     }
 

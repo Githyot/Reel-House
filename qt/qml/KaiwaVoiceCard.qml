@@ -25,7 +25,7 @@ Rectangle {
         for (let i = 1; i < vc.pauses.length; ++i) if (Math.abs(vc.pauses[i] - p) < Math.abs(vc.pauses[best] - p)) best = i
         return best
     }
-    radius: Theme.id === "android" ? 16 : (Theme.id === "windows" ? 8 : 12)
+    radius: Theme.shape.card
     color: Theme.c.card
     border.width: Theme.id === "windows" || Theme.id === "gnome" ? 1 : 0
     border.color: Theme.id === "windows" ? Theme.c.border : Theme.c.divider
@@ -57,7 +57,7 @@ Rectangle {
         }
         Lbl {
             width: parent.width; wrapMode: Text.Wrap; size: 13
-            color: vc.hasKey && !vc.usable ? Theme.c.warning : Theme.c.textDim
+            color: vc.hasKey && !vc.usable ? Theme.c.warningText : Theme.c.textDim
             text: !vc.hasKey ? vc.tr("Talking out loud with the tutor uses Gemini Live, free with a Google AI Studio key (the local AI and Claude cannot hear audio).")
                              : (vc.usable ? vc.tr("Talk out loud in real time: the tutor hears you, answers with its voice, notes your mistakes and keeps the scene going.")
                                           : vc.tr(vc.info.missing || ""))

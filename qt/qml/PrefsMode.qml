@@ -7,6 +7,9 @@ import Reelhouse 1.0
 Column {
     id: pm
     property string kind: "images"          // images | text
+    // which part of the tab: "read" (reading, page text, upscaling), "sources" (server and sources) or "all"
+    property string part: "all"
+    readonly property bool adv: dlg ? dlg.adv === true : false
     property var dlg
     readonly property var g: dlg ? dlg.g : ({})
     readonly property var ex: dlg ? dlg.ex : ({})
@@ -25,7 +28,7 @@ Column {
     spacing: 26
 
     // what comes from the servers arrives by itself; ask for the numbers again while this tab is open
-    Timer { interval: 3000; repeat: true; running: pm.visible && pm.images; onTriggered: Core.refreshPrefs() }
+    Timer { interval: 3000; repeat: true; running: pm.visible && pm.images && pm.part !== "read"; onTriggered: Core.refreshPrefs() }
     // The list of sources is long (hundreds): it is shown in pieces, a few more every moment, so the window never stalls.
     property int limit: 30
     onQueryChanged: limit = 30
@@ -35,7 +38,7 @@ Column {
 
     // ---------- the lists of extensions / plugins, filtered ----------
     property string query: ""
-    readonly property var allItems: images ? (su.exts || []) : ((nv.catalog || {}).items || [])
+    readonly property var allItems: part === "read" ? [] : images ? (su.exts || []) : ((nv.catalog || {}).items || [])
     readonly property var langsOn: images ? (g.manga_langs || []) : (g.novel_langs || [])
     readonly property var itemLangs: {
         const out = [], seen = {}
@@ -57,7 +60,7 @@ Column {
 
     // ================= Images: reading =================
     PrefGroup {
-        visible: pm.images
+        visible: pm.images && pm.part !== "sources"
         title: pm.tr("Reading")
         description: pm.tr("The language filters MangaDex and the sources of the Suwayomi server. More options are in the reader itself.")
         PrefCombo {
@@ -94,23 +97,7 @@ Column {
 
     // ================= Images: upscaling =================
     PrefGroup {
-        visible: pm.images
-        title: pm.tr("Upscaling (AI)")
-        description: pm.tr("The upscale button of the reader makes the pages sharper with an AI model that runs on your graphics card (Vulkan: NVIDIA, AMD and Intel). Each page is done once and kept.")
-        PrefRow {
-            title: pm.tr("Engine")
-            subtitle: pm.pt.engine ? pm.tr("Ready") : pm.tr("Not downloaded yet (about 40 MB). The button of the reader downloads it too.")
-            FlatButton { anchors.verticalCenter: parent.verticalCenter; kind: pm.pt.engine ? "plain" : "suggested"; implicitHeight: 34; glyph: "download"; text: pm.pt.engine ? pm.tr("Download again") : pm.tr("Download"); onClicked: Core.cmd({cmd: "upscale_install"}) }
-        }
-        PrefEntry { title: pm.tr("Another engine (optional)"); first: false; text: pm.g.up_engine || ""; onEdited: function(t) { pm.set("general.up_engine", t.trim()) } }
-        PrefRow { title: pm.tr("Models"); first: false; subtitle: pm.tr("Any NCNN model works: put its .param and .bin files in the \"models\" folder next to the engine. The model is chosen in the options of the reader.") }
-        PrefSpin { title: pm.tr("Tile size"); subtitle: pm.tr("0 is automatic. Lower it if the graphics card runs out of memory"); first: false; from: 0; to: 1024; step: 32; value: pm.g.up_tile || 0; onMoved: function(v) { pm.set("general.up_tile", v) } }
-        PrefSpin { title: pm.tr("Space for upscaled pages (MB)"); subtitle: pm.tr("The oldest pages are deleted when it is full"); first: false; from: 100; to: 20000; step: 100; value: pm.g.up_cache_mb || 1024; onMoved: function(v) { pm.set("general.up_cache_mb", v) } }
-    }
-
-    // ================= Images: text of the pages =================
-    PrefGroup {
-        visible: pm.images
+        visible: pm.images && pm.part !== "sources"
         title: pm.tr("Text of the pages")
         description: pm.tr("The reader reads the speech bubbles (OCR); then click a bubble to translate it. The page is sent to the reading service.")
         PrefCombo {
@@ -139,12 +126,12 @@ Column {
 
     // ================= Text: reading =================
     PrefGroup {
-        visible: !pm.images
+        visible: !pm.images && pm.part !== "sources"
         title: pm.tr("Reading")
         PrefSpin { title: pm.tr("Text size"); subtitle: pm.tr("Can also be changed inside the reader."); from: 10; to: 48; value: pm.g.novel_size || 19; onMoved: function(v) { pm.set("general.novel_size", v) } }
     }
     PrefGroup {
-        visible: !pm.images
+        visible: !pm.images && pm.part === "all"
         title: pm.tr("Source repository")
         description: pm.tr("Light novels and web novels. Sources are JavaScript plugins in the format that manga and light novel readers use. The app comes with no source: paste the address of a plugin list you trust.")
         PrefEntry { title: pm.tr("Repository address"); text: pm.g.text_repo || ""; onEdited: function(t) { pm.set("general.text_repo", t.trim()) } }
@@ -155,23 +142,39 @@ Column {
     }
 
     // ================= Images: the Suwayomi server =================
+    PrefsAdvanced { dlg: pm.dlg; visible: pm.images && pm.part !== "sources" }
     PrefGroup {
-        visible: pm.images
-        title: Qt.platform.os === "android" ? pm.tr("Sources (extensions)") : pm.tr("Sources (Suwayomi)")
-        description: Qt.platform.os === "android" ? pm.tr("The app runs extensions in the Tachiyomi / Mihon format by itself. The app comes with no repository: add the ones you want below.") : pm.tr("Suwayomi runs extensions in the Tachiyomi / Mihon format. The app downloads it once and runs it by itself while the Images mode is open. The app comes with no repository: add the ones you want below.")
-        PrefSwitch { title: Qt.platform.os === "android" ? pm.tr("Run them inside the app") : pm.tr("Run it inside the app"); subtitle: Qt.platform.os === "android" ? pm.tr("Turn off to use a Suwayomi server instead") : pm.tr("Turn off to use a Suwayomi server you started yourself"); checked: pm.g.suwayomi_managed !== false; onToggled: function(on) { pm.set("general.suwayomi_managed", on) } }
-        PrefEntry { visible: pm.g.suwayomi_managed === false; first: false; title: pm.tr("Server address"); text: pm.g.suwayomi_url || ""; onEdited: function(t) { pm.set("general.suwayomi_url", t.trim()) } }
-        PrefEntry { visible: pm.g.suwayomi_managed === false; first: false; title: pm.tr("User name (leave empty if there is none)"); text: pm.g.suwayomi_user || ""; onEdited: function(t) { pm.set("general.suwayomi_user", t.trim()) } }
-        PrefEntry { visible: pm.g.suwayomi_managed === false; first: false; title: pm.tr("Password"); password: true; text: pm.g.suwayomi_pass || ""; onEdited: function(t) { pm.set("general.suwayomi_pass", t) } }
+        visible: pm.images && pm.part !== "sources" && pm.adv
+        title: pm.tr("Upscaling (AI)")
+        description: pm.tr("The upscale button of the reader makes the pages sharper with an AI model that runs on your graphics card (Vulkan: NVIDIA, AMD and Intel). Each page is done once and kept.")
         PrefRow {
-            title: pm.tr("Status"); subtitle: pm.su.status || ""; first: false
-            FlatButton { anchors.verticalCenter: parent.verticalCenter; kind: "suggested"; implicitHeight: 34; text: pm.g.suwayomi_managed === false ? pm.tr("Connect") : pm.tr("Restart"); onClicked: Core.cmd({cmd: "suwayomi_restart"}) }
+            title: pm.tr("Engine")
+            subtitle: pm.pt.engine ? pm.tr("Ready") : pm.tr("Not downloaded yet (about 40 MB). The button of the reader downloads it too.")
+            FlatButton { anchors.verticalCenter: parent.verticalCenter; kind: pm.pt.engine ? "plain" : "suggested"; implicitHeight: 34; glyph: "download"; text: pm.pt.engine ? pm.tr("Download again") : pm.tr("Download"); onClicked: Core.cmd({cmd: "upscale_install"}) }
+        }
+        PrefEntry { title: pm.tr("Another engine (optional)"); first: false; text: pm.g.up_engine || ""; onEdited: function(t) { pm.set("general.up_engine", t.trim()) } }
+        PrefRow { title: pm.tr("Models"); first: false; subtitle: pm.tr("Any NCNN model works: put its .param and .bin files in the \"models\" folder next to the engine. The model is chosen in the options of the reader.") }
+        PrefSpin { title: pm.tr("Tile size"); subtitle: pm.tr("0 is automatic. Lower it if the graphics card runs out of memory"); first: false; from: 0; to: 1024; step: 32; value: pm.g.up_tile || 0; onMoved: function(v) { pm.set("general.up_tile", v) } }
+        PrefSpin { title: pm.tr("Space for upscaled pages (MB)"); subtitle: pm.tr("The oldest pages are deleted when it is full"); first: false; from: 100; to: 20000; step: 100; value: pm.g.up_cache_mb || 1024; onMoved: function(v) { pm.set("general.up_cache_mb", v) } }
+    }
+
+    // ================= Images: text of the pages =================
+    // Sources tab: the repositories (Images) and the plugin list (Text) are added with every other addon,
+    // in Preferences > Addons & accounts (one box for all the modes)
+    PrefGroup {
+        visible: pm.part === "sources"
+        title: pm.images ? pm.tr("Repositories") : pm.tr("Source repository")
+        description: pm.tr("Repositories and plugin lists are added with the other addons, in Addons & accounts.")
+        PrefButton {
+            title: pm.images ? ((pm.su.repos || []).length > 0 ? pm.tr("%1 repositories in use").arg((pm.su.repos || []).length) : pm.tr("No repository yet")) : ((pm.g.text_repo || "") !== "" ? pm.g.text_repo : pm.tr("No repository yet"))
+            subtitle: pm.images ? (pm.su.status || "") : ((pm.nv.catalog || {}).status || "")
+            label: pm.tr("Addons & accounts")
+            onActivated: if (pm.dlg) pm.dlg.go("addons", "addons")
         }
     }
 
-    // ================= Images: repositories =================
     PrefGroup {
-        visible: pm.images
+        visible: pm.images && pm.part === "all"
         title: pm.tr("Repositories")
         description: pm.tr("Where the extensions come from. Add the address of a repository (index.min.json, index.pb or its GitHub page).")
         PrefEntry { id: repoEntry; title: pm.tr("Add a repository"); apply: true; text: ""; onApplied: function(t) { Core.cmd({cmd: "suwayomi_add_repo", text: t.trim()}); repoEntry.clear() } }
@@ -187,7 +190,24 @@ Column {
     }
 
     // ================= the sources to install =================
+    PrefsAdvanced { dlg: pm.dlg; visible: pm.images && pm.part !== "read" }
+    PrefGroup {
+        visible: pm.images && pm.part !== "read" && pm.adv
+        title: Qt.platform.os === "android" ? pm.tr("Sources (extensions)") : pm.tr("Sources (Suwayomi)")
+        description: Qt.platform.os === "android" ? pm.tr("The app runs extensions in the Tachiyomi / Mihon format by itself. The app comes with no repository: add the ones you want below.") : pm.tr("Suwayomi runs extensions in the Tachiyomi / Mihon format. The app downloads it once and runs it by itself while the Images mode is open. The app comes with no repository: add the ones you want below.")
+        PrefSwitch { title: Qt.platform.os === "android" ? pm.tr("Run them inside the app") : pm.tr("Run it inside the app"); subtitle: Qt.platform.os === "android" ? pm.tr("Turn off to use a Suwayomi server instead") : pm.tr("Turn off to use a Suwayomi server you started yourself"); checked: pm.g.suwayomi_managed !== false; onToggled: function(on) { pm.set("general.suwayomi_managed", on) } }
+        PrefEntry { visible: pm.g.suwayomi_managed === false; first: false; title: pm.tr("Server address"); text: pm.g.suwayomi_url || ""; onEdited: function(t) { pm.set("general.suwayomi_url", t.trim()) } }
+        PrefEntry { visible: pm.g.suwayomi_managed === false; first: false; title: pm.tr("User name (leave empty if there is none)"); text: pm.g.suwayomi_user || ""; onEdited: function(t) { pm.set("general.suwayomi_user", t.trim()) } }
+        PrefEntry { visible: pm.g.suwayomi_managed === false; first: false; title: pm.tr("Password"); password: true; text: pm.g.suwayomi_pass || ""; onEdited: function(t) { pm.set("general.suwayomi_pass", t) } }
+        PrefRow {
+            title: pm.tr("Status"); subtitle: pm.su.status || ""; first: false
+            FlatButton { anchors.verticalCenter: parent.verticalCenter; kind: "suggested"; implicitHeight: 34; text: pm.g.suwayomi_managed === false ? pm.tr("Connect") : pm.tr("Restart"); onClicked: Core.cmd({cmd: "suwayomi_restart"}) }
+        }
+    }
+
+    // ================= Images: repositories =================
     Column {
+        visible: pm.part !== "read"
         width: parent.width
         spacing: 8
         Lbl { text: pm.images ? pm.tr("Manga and comic sources") : pm.tr("Novel sources"); bold: true; size: 15 }
@@ -224,7 +244,7 @@ Column {
         Rectangle {
             width: parent.width
             height: 460
-            radius: 12
+            radius: Theme.shape.card
             color: Theme.c.card
             border.width: 1
             border.color: Theme.c.divider
@@ -253,7 +273,7 @@ Column {
                         id: eAct
                         anchors.right: parent.right; anchors.rightMargin: 10; anchors.verticalCenter: parent.verticalCenter
                         spacing: 6
-                        Icon { visible: !!e.installed && !e.update; anchors.verticalCenter: parent.verticalCenter; name: "check"; size: 18; color: Theme.c.success }
+                        Icon { visible: !!e.installed && !e.update; anchors.verticalCenter: parent.verticalCenter; name: "check"; size: 18; color: Theme.c.successText }
                         FlatButton {
                             visible: !e.installed || !!e.update
                             kind: "suggested"; implicitHeight: 32

@@ -71,20 +71,20 @@ Item {
                     readonly property bool done: goalChip.modelData.done === true
                     height: 28; radius: 14
                     width: Math.min(lb.width, gl.implicitWidth + 24)
-                    color: done ? Qt.rgba(Theme.c.success.r, Theme.c.success.g, Theme.c.success.b, 0.18) : Theme.c.fill
+                    color: done ? Qt.alpha(Theme.c.success, 0.18) : Theme.c.fill
                     Lbl {
                         id: gl
                         x: 12; width: parent.width - 24; anchors.verticalCenter: parent.verticalCenter
                         elide: Text.ElideRight; size: 12
                         text: (goalChip.done ? "✓ " : (goalChip.index + 1) + ". ") + lb.tr(goalChip.modelData.text || "")
-                        color: goalChip.done ? Theme.c.success : Theme.c.text
+                        color: goalChip.done ? Theme.c.successText : Theme.c.text
                     }
                 }
             }
             Rectangle {
                 height: 28; radius: 14
                 width: sc.implicitWidth + 24
-                color: Qt.rgba(Theme.c.accent.r, Theme.c.accent.g, Theme.c.accent.b, 0.16)
+                color: Qt.alpha(Theme.c.accent, 0.16)
                 Lbl { id: sc; anchors.centerIn: parent; size: 12; bold: true; color: Theme.c.accentText; text: "★ " + (lb.sess ? (lb.sess.score || 0) : 0) }
             }
         }
@@ -109,7 +109,7 @@ Item {
                     readonly property real lvl: lb.held && lb.live.muted !== true ? Math.max(0, Math.min(1, lb.live.level || 0)) : 0
                     width: 76 + lvl * 26; height: width; radius: width / 2
                     visible: lvl > 0.05
-                    color: Qt.rgba(Theme.c.accent.r, Theme.c.accent.g, Theme.c.accent.b, 0.25)
+                    color: Qt.alpha(Theme.c.accent, 0.25)
                 }
                 // the tutor speaking
                 Rectangle {
@@ -128,7 +128,7 @@ Item {
                         anchors.centerIn: parent
                         name: !lb.running ? "play" : (lb.held ? "mic" : (lb.ptt ? "mic" : "mute"))
                         size: 30
-                        color: !lb.running || lb.held ? Theme.c.accentFg : Theme.c.text
+                        color: !lb.running ? Theme.c.greenFg : (lb.held ? (lb.ptt ? Theme.c.errorFg : Theme.c.accentFg) : Theme.c.text)
                     }
                     MouseArea {
                         anchors.fill: parent
@@ -163,7 +163,7 @@ Item {
         Lbl {
             visible: lb.running && (lb.live.warn || "") !== ""
             width: parent.width; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.Wrap
-            color: Theme.c.warning; size: 12
+            color: Theme.c.warningText; size: 12
             text: lb.live.warn || ""
         }
         // a word that will not come out: typed, it goes as your turn

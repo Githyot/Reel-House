@@ -4,7 +4,7 @@ A Stremio-style media center: a Rust core (`src/`) with a **Qt 6 / Qt Quick** in
 
 ## Features
 - Discover page (Cinemeta + Netflix catalog addon), Library, search, hero banner, detail page with TMDB artwork
-- Stremio addons (add by URL in Preferences > Addons; AniSync and SubSource: paste your personal install link)
+- Stremio addons (add by URL in Preferences > Addons; addons that need setup: paste the personal link from their /configure page)
 - Playback **with or without Real-Debrid**: without it, torrents stream through the rqbit engine (downloaded automatically on first use)
 - Player controls in Qt Quick (no mpv OSC): seek bar with thumbnail previews, Skip 90 s button, quality/audio/subtitle menus
 - Anime4K upscaling (tab "Upscalling")

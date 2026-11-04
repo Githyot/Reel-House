@@ -297,6 +297,8 @@ Rectangle {
         pagesKey = k
         lastSent = -1
         trIds = ({})
+        // the core forgets the text/upscaling of the chapter that was left: coming back to it asks again (from the disk)
+        reqPages = ({})
         translateAll = false
         curPage = Math.max(0, Math.min(r.resume || 0, pages.length - 1))
         Qt.callLater(wantVisible)
@@ -885,7 +887,7 @@ Rectangle {
                         BusyIndicator { running: parent.visible; width: 24; height: 24 }
                         Lbl { text: rp.tr("Translating…"); dim: true }
                     }
-                    ScrollView { visible: !!rp.sheetRes; width: parent.width; height: Math.min(180, Math.max(48, tro.implicitHeight)); TextArea { id: tro; readOnly: true; selectByMouse: true; wrapMode: TextArea.Wrap; selectionColor: Theme.c.accent; selectedTextColor: Theme.c.accentFg; text: rp.sheetRes ? (rp.sheetRes.error ? rp.sheetRes.error : (rp.sheetRes.texts || []).join("\n")) : ""; color: rp.sheetRes && rp.sheetRes.error ? Theme.c.error : Theme.c.text; font.pixelSize: 15; font.family: Theme.type.family; background: null } }
+                    ScrollView { visible: !!rp.sheetRes; width: parent.width; height: Math.min(180, Math.max(48, tro.implicitHeight)); TextArea { id: tro; readOnly: true; selectByMouse: true; wrapMode: TextArea.Wrap; selectionColor: Theme.c.accent; selectedTextColor: Theme.c.accentFg; text: rp.sheetRes ? (rp.sheetRes.error ? rp.sheetRes.error : (rp.sheetRes.texts || []).join("\n")) : ""; color: rp.sheetRes && rp.sheetRes.error ? Theme.c.errorText : Theme.c.text; font.pixelSize: 15; font.family: Theme.type.family; background: null } }
                 }
             }
         }

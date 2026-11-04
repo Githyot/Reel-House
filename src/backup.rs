@@ -464,6 +464,8 @@ pub fn safe_rel(path: &str) -> bool {
 const SKIP_DIRS: &[&str] = &[
     "torrents", "runtime", "shaders", "thumbs", "backups", "subtitles", "imgcache", "mal-cache", "detail-cache", "ocr", "upscaled", "upscaler", "tools",
     "debug", "autocards", "suwayomi", "learn", "cache", "logs", "tmp", "temp",
+    // IP protection: Tor's directory cache and state (src/privacy.rs)
+    "tor", "vpn",
 ];
 /// Folders skipped wherever they are (a web browser profile keeps its caches in these).
 const SKIP_ANYWHERE: &[&str] = &["cache", "caches", "code cache", "gpucache", "dawncache", "grshadercache", "shadercache", "service worker", "blob_storage", "thumbs", "thumbnails", "tmp", "temp"];
@@ -482,6 +484,10 @@ pub fn image_file(url: &str) -> String {
 /// A file never kept: half-written files, logs, locks and other backups.
 fn skip_file(name: &str) -> bool {
     let l = name.to_ascii_lowercase();
+    // IP protection's choice holds a WireGuard private key or a proxy password: never in a backup (online copies)
+    if l == "privacy.json" {
+        return true;
+    }
     [".tmp", ".part", ".log", ".pid", ".lock", EXT, LEGACY_EXT, ".crdownload"].iter().any(|e| l.ends_with(e)) || l.starts_with("crash-") || l.starts_with('~')
 }
 

@@ -4,10 +4,12 @@
 // app's window at the WebPane's place, so it is not part of the Qt Quick picture. QML drawn over the page (the side
 // sheets) only shows while WebPane hides it (`covered`). Touches and the keyboard go to the page directly.
 #include "cef_host.h"
+#include "bridge.h"
 
 #ifdef REELHOUSE_WEBVIEW
 
 #include <QDesktopServices>
+#include <QLocale>
 #include <QHash>
 #include <QPointer>
 #include <QQmlComponent>
@@ -93,7 +95,22 @@ QQuickItem *item(int tab) {
     return it == g_tabs.end() ? nullptr : it->item.data();
 }
 
-QUrl toUrl(const QString &s) { return s.isEmpty() ? QUrl(QStringLiteral("about:blank")) : QUrl::fromUserInput(s); }
+// IP protection (src/privacy.rs) on: the Android System WebView cannot be sent through the app's gateway, so pages
+// from the internet are not opened at all (they would show the real address); a short page says why.
+QUrl toUrl(const QString &s) {
+    if (s.isEmpty()) return QUrl(QStringLiteral("about:blank"));
+    const QUrl u = QUrl::fromUserInput(s);
+    const QString host = u.host();
+    const bool local = u.isLocalFile() || u.scheme() == QLatin1String("about") || u.scheme() == QLatin1String("data") || host == QLatin1String("localhost") || host == QLatin1String("127.0.0.1");
+    if (!local && rh_privacy_port() != 0) {
+        char *raw = rh_tr(QLocale::system().name().left(2).toUtf8().constData(), "IP protection is on: on Android the research browser cannot go through it, so pages do not open here. Turn the protection off in Preferences to browse.");
+        const QString text = QString::fromUtf8(raw ? raw : "");
+        if (raw) rh_free_str(raw);
+        return QUrl(QStringLiteral("data:text/html;charset=utf-8,") + QString::fromLatin1(QUrl::toPercentEncoding(
+            QStringLiteral("<html><body style='font-family:sans-serif;padding:24px;color:#888'><p>%1</p></body></html>").arg(text.toHtmlEscaped()))));
+    }
+    return u;
+}
 
 }  // namespace
 

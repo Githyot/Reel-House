@@ -446,6 +446,12 @@ pub fn quality_options(streams: &[Stream]) -> Vec<QualityOption> {
 }
 
 pub fn magnet(s: &Stream) -> Option<String> {
+    // IP protection on: the UDP trackers (which cannot go through the tunnel) are asked over HTTP instead
+    plain_magnet(s).map(|m| crate::privacy::magnet_for_tunnel(&m))
+}
+
+/// The magnet link as the addon gave it, before IP protection rewrites its trackers.
+fn plain_magnet(s: &Stream) -> Option<String> {
     let hash = s.info_hash.as_ref()?;
     let mut m = format!("magnet:?xt=urn:btih:{}", hash);
     if let Some(dn) = &s.filename {
@@ -579,7 +585,8 @@ mod tests {
         let mut st = s("x", "", Some("abc"));
         st.filename = Some("a b.mkv".into());
         st.trackers = vec![DEFAULT_TRACKERS[0].to_string(), "udp://own:1".to_string()];
-        let m = magnet(&st).unwrap();
+        // plain_magnet: another test turns IP protection on for the whole process, which rewrites the trackers
+        let m = plain_magnet(&st).unwrap();
         assert!(m.starts_with("magnet:?xt=urn:btih:abc&dn=a%20b.mkv&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce"));
         assert_eq!(m.matches("opentrackr").count(), 1);
         assert!(m.contains("udp%3A%2F%2Fown%3A1"));

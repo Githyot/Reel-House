@@ -3,7 +3,20 @@
 //! it exactly as to the program (add a magnet, pick files, stream, stats). It lives as long as the app.
 
 use std::path::Path;
-use std::sync::mpsc;
+use std::sync::{mpsc, Mutex};
+
+/// The engines running now, by API port: dropping the sender stops that engine (its torrents and its API), so that
+/// a change of IP protection starts a new engine with the new network options.
+static RUNNING: Mutex<Vec<(u16, tokio::sync::oneshot::Sender<()>)>> = Mutex::new(Vec::new());
+
+/// Stops the engine serving on `port` (when the app drops it).
+pub fn stop(port: u16) {
+    let mut g = RUNNING.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some(i) = g.iter().position(|(p, _)| *p == port) {
+        let (_, tx) = g.remove(i);
+        let _ = tx.send(());
+    }
+}
 
 /// Starts the engine on its own thread, serving the API on 127.0.0.1:`port` and downloading into `download_dir`.
 /// Returns once the API listens, or the reason it could not start.
@@ -26,10 +39,16 @@ pub fn start(download_dir: &Path, port: u16) -> Result<(), String> {
                 // emulators that cannot open IPv6 sockets
                 let mut session = None;
                 let mut last = String::new();
+                // IP protection (src/privacy.rs): peers only through the local gateway (SOCKS5); no DHT and no local
+                // discovery (both UDP from this device), nothing listening
+                let proxy = crate::privacy::socks_proxy();
+                let guarded = crate::privacy::active();
                 for ipv4_only in [false, true] {
                     let opts = librqbit::SessionOptions {
                         persistence: None,
-                        dht: Some(librqbit::DhtSessionConfig { persistence: None, ..Default::default() }),
+                        dht: if guarded { None } else { Some(librqbit::DhtSessionConfig { persistence: None, ..Default::default() }) },
+                        disable_local_service_discovery: guarded,
+                        connect: proxy.clone().map(|p| librqbit::ConnectionOptions { proxy_url: Some(p), ..Default::default() }),
                         ipv4_only,
                         ..Default::default()
                     };
@@ -54,11 +73,23 @@ pub fn start(download_dir: &Path, port: u16) -> Result<(), String> {
                         return;
                     }
                 };
+                let session_handle = session.clone();
                 let api = librqbit::api::Api::new(session, None, None);
                 let http = librqbit::http_api::HttpApi::new(api, Some(librqbit::http_api::HttpApiOptions { read_only: false, ..Default::default() }));
+                let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+                RUNNING.lock().unwrap_or_else(|p| p.into_inner()).push((port, stop_tx));
                 let _ = tx.send(Ok(()));
-                if let Err(e) = http.make_http_api_and_run(listener, None).await {
-                    crate::debug::log("torrent", &format!("embedded engine stopped: {:#}", e));
+                let session_for_stop = session_handle;
+                tokio::select! {
+                    r = http.make_http_api_and_run(listener, None) => {
+                        if let Err(e) = r {
+                            crate::debug::log("torrent", &format!("embedded engine stopped: {:#}", e));
+                        }
+                    }
+                    _ = stop_rx => {
+                        crate::debug::log("torrent", "embedded engine stopped by the app");
+                        session_for_stop.stop().await;
+                    }
                 }
             });
         })

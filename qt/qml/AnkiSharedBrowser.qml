@@ -299,7 +299,7 @@ Popup {
                     anchors.verticalCenter: parent.verticalCenter
                     width: parent.width - 40
                     elide: Text.ElideRight
-                    color: sb.st.error ? Theme.c.error : Theme.c.textDim
+                    color: sb.st.error ? Theme.c.errorText : Theme.c.textDim
                     font.pixelSize: 13; font.family: Theme.type.family
                     text: sb.st.error ? sb.tr(sb.st.error)
                         : sb.st.loading === true ? sb.tr("Searching AnkiWeb…")
@@ -322,7 +322,7 @@ Popup {
                     Rectangle {
                         anchors.horizontalCenter: parent.horizontalCenter
                         width: 64; height: 64; radius: 32
-                        color: Qt.rgba(Theme.c.accent.r, Theme.c.accent.g, Theme.c.accent.b, 0.15)
+                        color: Qt.alpha(Theme.c.accent, 0.15)
                         Icon { anchors.centerIn: parent; name: "study"; size: 32; color: Theme.c.accentText }
                     }
                     Lbl { width: parent.width; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.Wrap; bold: true; size: 20; text: sb.tr("Find a deck made by the Anki community") }
@@ -447,7 +447,7 @@ Popup {
                         visible: !!sb.deck.error
                         width: parent.width; wrapMode: Text.Wrap
                         text: sb.tr(sb.deck.error || "")
-                        color: Theme.c.error; font.pixelSize: 14; font.family: Theme.type.family
+                        color: Theme.c.errorText; font.pixelSize: 14; font.family: Theme.type.family
                     }
 
                     // title, numbers and the big button
@@ -626,8 +626,8 @@ Popup {
                                         id: thumb
                                         x: 16; y: 12
                                         width: 28; height: 28; radius: 14
-                                        color: rv.r.up ? Qt.rgba(Theme.c.success.r, Theme.c.success.g, Theme.c.success.b, 0.16) : Qt.rgba(Theme.c.error.r, Theme.c.error.g, Theme.c.error.b, 0.16)
-                                        Icon { anchors.centerIn: parent; name: rv.r.up ? "check" : "close"; size: 16; color: rv.r.up ? Theme.c.success : Theme.c.error }
+                                        color: rv.r.up ? Qt.alpha(Theme.c.success, 0.16) : Qt.alpha(Theme.c.error, 0.16)
+                                        Icon { anchors.centerIn: parent; name: rv.r.up ? "check" : "close"; size: 16; color: rv.r.up ? Theme.c.successText : Theme.c.errorText }
                                     }
                                     Column {
                                         id: rvCol

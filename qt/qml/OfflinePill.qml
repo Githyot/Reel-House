@@ -25,7 +25,7 @@ Rectangle {
         id: row
         anchors.centerIn: parent
         spacing: 8
-        Icon { name: "wifioff"; size: 16; color: pill.forced ? Theme.c.textDim : Theme.c.warning; anchors.verticalCenter: parent.verticalCenter }
+        Icon { name: "wifioff"; size: 16; color: pill.forced ? Theme.c.textDim : Theme.c.warningText; anchors.verticalCenter: parent.verticalCenter }
         Text {
             anchors.verticalCenter: parent.verticalCenter
             text: pill.forced ? pill.tr("Offline mode") : pill.tr("No connection")

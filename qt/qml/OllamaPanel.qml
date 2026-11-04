@@ -65,7 +65,7 @@ Rectangle {
             width: parent.width
             text: op.phaseText()
             dim: !op.failed
-            color: op.failed ? Theme.c.error : Theme.c.textDim
+            color: op.failed ? Theme.c.errorText : Theme.c.textDim
             wrapMode: Text.Wrap
         }
 

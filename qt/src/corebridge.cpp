@@ -48,6 +48,7 @@
 #include <QBuffer>
 #include <QFile>
 #include <QNetworkAccessManager>
+#include <QNetworkProxy>
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QQuickItem>
@@ -72,6 +73,8 @@ static QVariantMap parseMap(char *raw) {
 
 CoreBridge::CoreBridge(QObject *parent) : QObject(parent) {
     m_b = rh_new();
+    // IP protection: Qt's own requests (pictures, QML) go through the core's gateway before the first one is made
+    applyPrivacyProxy(rh_privacy_port());
     g_inst.store(this);
     if (!m_b) qCritical() << "the core could not start";
     else {
@@ -481,6 +484,11 @@ void CoreBridge::tick() {
         else if (n == "lens_frame") { QVariantMap f = e; f.remove("e"); emit lensFrame(f); }
         else if (n == "restored") { home = library = detail = notices = prefs = true; }
         else if (n == "profiles") { m_profiles = fetch("profiles"); emit profilesChanged(); }
+        else if (n == "privacy") {
+            QVariantMap m = e; m.remove("e");
+            applyPrivacyProxy(m.value("proxy_port").toInt());
+            if (m != m_privacy) { m_privacy = m; emit privacyChanged(); }
+        }
         else if (n == "net") { QVariantMap m = e; m.remove("e"); if (m != m_net) { m_net = m; emit netChanged(); } }
         else if (n == "info") {
             m_infos.insert(e.value("kind").toString(), e.value("text").toString());
@@ -757,4 +765,15 @@ QString CoreBridge::webUserAgent() {
 #else
     return QString();
 #endif
+}
+
+// IP protection (src/privacy.rs): every QNetworkAccessManager of the app (pictures, pages) uses the application
+// proxy, so with the protection on they go through the core's local gateway as SOCKS5 (names resolved there, no DNS
+// from here). Qt never proxies localhost, so the core's own servers are reached directly.
+void CoreBridge::applyPrivacyProxy(int port) {
+    if (port == m_privacyPort) return;
+    m_privacyPort = port;
+    if (port > 0) QNetworkProxy::setApplicationProxy(QNetworkProxy(QNetworkProxy::Socks5Proxy, QStringLiteral("127.0.0.1"), quint16(port)));
+    else QNetworkProxy::setApplicationProxy(QNetworkProxy(QNetworkProxy::NoProxy));
+    qInfo().noquote() << "[privacy] Qt proxy:" << (port > 0 ? QStringLiteral("socks5://127.0.0.1:%1").arg(port) : QStringLiteral("none"));
 }

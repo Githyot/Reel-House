@@ -7,7 +7,10 @@ import Reelhouse 1.0
 Item {
     id: page
     readonly property var cards: Core.library.cards !== undefined ? Core.library.cards : []
-    readonly property int perLine: Theme.mobile ? 1 : Math.max(1, Math.min(3, Math.floor((width - 36) / 420)))
+    // the same gutter as the large title; on a wide screen more columns instead of very long synopsis lines
+    readonly property real gutter: Theme.mobile ? 16 : Theme.spacing.page
+    readonly property int gap: Theme.spacing.rowGap || 14
+    readonly property int perLine: Theme.mobile ? 1 : Math.max(1, Math.min(5, Math.floor((width - 2 * gutter + gap) / (420 + gap))))
     onVisibleChanged: if (visible) Core.cmd({cmd: "fill_library"})
 
     Flickable {
@@ -21,12 +24,12 @@ Item {
         ScrollBar.vertical: ScrollBar { }
         Grid {
             id: grid
-            x: Theme.mobile ? 16 : 18
-            y: 14
-            width: scroll.width - (Theme.mobile ? 32 : 36)
+            x: page.gutter
+            y: Theme.mobile ? 8 : 14
+            width: scroll.width - 2 * page.gutter
             columns: page.perLine
-            rowSpacing: 14
-            columnSpacing: 14
+            rowSpacing: page.gap
+            columnSpacing: page.gap
             // the number is the model, so the cards stay (and keep their covers) while synopses and scores
             // arrive one by one in the background; a new array would rebuild every card each time
             Repeater {
@@ -34,7 +37,7 @@ Item {
                 delegate: RichCard {
                     required property int index
                     readonly property var modelData: page.cards[index] || ({})
-                    width: (grid.width - (page.perLine - 1) * 14) / page.perLine
+                    width: (grid.width - (page.perLine - 1) * page.gap) / page.perLine
                     card: modelData
                     onClicked: Core.cmd({cmd: "open_detail", item: modelData.item})
                 }
@@ -43,13 +46,12 @@ Item {
     }
     // a phone: the list pulled down past its top looks the library up again
     PullToRefresh { target: scroll; onRefresh: Core.cmd({cmd: "fill_library"}) }
-    Column {
+    // the Arara keeps the empty shelf company
+    StatusPage {
         anchors.centerIn: parent
         visible: page.cards.length === 0
-        spacing: 8
-        // the macaw keeps the empty shelf company
-        Mascot { anchors.horizontalCenter: parent.horizontalCenter; size: 120; mood: "think"; animate: parent.visible }
-        Text { anchors.horizontalCenter: parent.horizontalCenter; text: Core.tr(Core.uiLang, "Your library is empty"); color: Theme.c.text; font.pixelSize: 22; font.weight: Font.ExtraBold; font.family: Theme.type.family }
-        Text { anchors.horizontalCenter: parent.horizontalCenter; text: Core.tr(Core.uiLang, "Open a title and choose “Add to library” to keep it here."); color: Theme.c.textDim; font.pixelSize: 15; font.family: Theme.type.family }
+        mood: "think"
+        title: Core.tr(Core.uiLang, "Your library is empty")
+        description: Core.tr(Core.uiLang, "Open a title and choose “Add to library” to keep it here.")
     }
 }

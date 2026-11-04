@@ -300,6 +300,9 @@ impl Mpv {
                 ("audio-display", "no"),
                 ("cache", "yes"),
                 ("network-timeout", "30"),
+                // a short clip: a small read-ahead (mpv's default keeps up to 150 MB + 50 MB in memory)
+                ("demuxer-max-bytes", "32MiB"),
+                ("demuxer-max-back-bytes", "8MiB"),
                 ("vd-lavc-threads", "2"),
             ],
         )
@@ -326,6 +329,7 @@ impl Mpv {
                 ("vd-lavc-threads", "2"),
                 ("cache", "yes"),
                 ("demuxer-max-bytes", "32MiB"),
+                ("demuxer-max-back-bytes", "4MiB"),
                 ("ytdl", "no"),
                 ("load-scripts", "no"),
             ],
@@ -540,6 +544,15 @@ impl Mpv {
     }
 
     pub fn cmd(&self, args: &[&str]) -> Result<(), String> {
+        // IP protection (src/privacy.rs): a video from another computer is fetched through the local gateway; files
+        // and the torrent engine on this device are not (ffmpeg's own no_proxy also leaves 127.0.0.1 alone)
+        if args.first() == Some(&"loadfile") {
+            if let Some(url) = args.get(1) {
+                let remote = url.contains("://") && !crate::connectivity::is_local(url);
+                let proxy = if remote { crate::privacy::http_proxy().unwrap_or_default() } else { String::new() };
+                let _ = self.set("http-proxy", &proxy);
+            }
+        }
         let owned: Vec<CString> = args.iter().map(|a| Self::cstr(a)).collect::<Result<_, _>>()?;
         let mut ptrs: Vec<*const c_char> = owned.iter().map(|c| c.as_ptr()).collect();
         ptrs.push(std::ptr::null());
