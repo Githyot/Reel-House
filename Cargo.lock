@@ -4225,6 +4225,7 @@ dependencies = [
  "jpeg-decoder",
  "libc",
  "libloading",
+ "liblzma-sys",
  "librqbit",
  "librqbit-dualstack-sockets",
  "png",
