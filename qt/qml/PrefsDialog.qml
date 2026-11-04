@@ -636,19 +636,36 @@ Popup {
                             FlatButton { anchors.verticalCenter: parent.verticalCenter; kind: "flat"; text: Core.tr(Core.uiLang, "Open"); implicitHeight: 34; onClicked: Qt.openUrlExternally(updGrp.u.page || "") }
                         }
                         PrefButton {
-                            visible: updGrp.has
-                            title: updGrp.u.canInstall === true ? Core.tr(Core.uiLang, "Download and install") : Core.tr(Core.uiLang, "Open the release page")
+                            visible: updGrp.has || updGrp.st === "installed"
+                            title: {
+                                const T = function(x) { return Core.tr(Core.uiLang, x) }
+                                if (updGrp.st === "ready") return updGrp.u.platform === "android" ? T("Ready to install") : T("Downloaded: installs when you close Reelhouse")
+                                if (updGrp.st === "installed") return T("Installed")
+                                return updGrp.u.canInstall === true ? T("Download and install") : T("Open the release page")
+                            }
                             subtitle: {
                                 const T = function(x) { return Core.tr(Core.uiLang, x) }
-                                if (updGrp.st === "installing") return T("Reelhouse closes, the new version is copied and it opens again.")
+                                const saved = (updGrp.u.full || 0) > 0 && (updGrp.u.downloaded || 0) < updGrp.u.full
+                                        ? "\n" + T("Only what changed was downloaded: %1 of %2.").arg(updGrp.mb(updGrp.u.downloaded)).arg(updGrp.mb(updGrp.u.full)) : ""
+                                if (updGrp.st === "installed") return T("The new version is installed. Close and open Reelhouse to use it.")
+                                if (updGrp.st === "installing") return updGrp.u.platform === "linux" ? T("The system asks for your password to install the new version.") : T("Reelhouse closes, the new version is copied and it opens again.")
+                                if (updGrp.st === "ready" && updGrp.u.platform === "android") return T("Android asks you to confirm the install. Allow Reelhouse to install apps when it asks.") + saved
+                                if (updGrp.st === "ready") return T("Or install it now: Reelhouse closes and opens again.") + saved + (updGrp.u.error ? "\n" + T(updGrp.u.error) : "") + (updGrp.u.note ? "\n" + updGrp.u.note : "")
                                 if (updGrp.st === "opened") return T("The installer was opened. If nothing opened, install it by hand:") + "\n" + (updGrp.u.note || "")
-                                if (updGrp.u.platform === "windows") return T("Reelhouse downloads the new version, closes, replaces its files (keeping a copy of the old ones) and opens again.")
+                                if (updGrp.u.platform === "windows") return T("Reelhouse downloads only what changed, closes, replaces its files (keeping a copy of the old ones) and opens again.")
+                                if (updGrp.u.platform === "linux") return T("Reelhouse downloads only what changed and the system asks for your password to install it.")
+                                if (updGrp.u.platform === "android") return T("Reelhouse downloads only what changed and Android asks you to confirm the install.")
                                 if (updGrp.u.canInstall === true) return T("The package is saved in Downloads and opened with the system installer.")
                                 return T("The release page opens: download and install the file of your device.")
                             }
-                            label: updGrp.st === "downloading" ? Core.tr(Core.uiLang, "Cancel") : (updGrp.u.canInstall === true ? Core.tr(Core.uiLang, "Install") : Core.tr(Core.uiLang, "Open"))
+                            label: {
+                                const T = function(x) { return Core.tr(Core.uiLang, x) }
+                                if (updGrp.st === "downloading") return T("Cancel")
+                                if (updGrp.st === "ready") return T("Install now")
+                                return updGrp.u.canInstall === true ? T("Install") : T("Open")
+                            }
                             kind: updGrp.st === "downloading" ? "plain" : "suggested"
-                            enabled: updGrp.st !== "installing" && updGrp.st !== "checking"
+                            enabled: updGrp.st !== "installing" && updGrp.st !== "checking" && updGrp.st !== "installed"
                             onActivated: Core.cmd({cmd: updGrp.st === "downloading" ? "update_cancel" : "update_install"})
                         }
                         PrefRow {
@@ -663,8 +680,17 @@ Popup {
                             }
                         }
                         PrefSwitch {
+                            title: Core.tr(Core.uiLang, "Update by itself")
+                            subtitle: updGrp.u.platform === "android"
+                                      ? Core.tr(Core.uiLang, "Downloads a new version in the background (only what changed) and opens the Android installer to confirm")
+                                      : Core.tr(Core.uiLang, "Downloads a new version in the background (only what changed) and installs it when you close Reelhouse")
+                            checked: dlg.g.update_auto !== false
+                            onToggled: function(on) { dlg.set("general.update_auto", on) }
+                        }
+                        PrefSwitch {
+                            visible: dlg.g.update_auto === false
                             title: Core.tr(Core.uiLang, "Check when the app opens")
-                            subtitle: updGrp.u.tokenSet === true ? Core.tr(Core.uiLang, "Once, in the background; a notice shows when there is a new version") : Core.tr(Core.uiLang, "Once, in the background. While the repository is private, it needs the GitHub token of Backup > Online copy")
+                            subtitle: Core.tr(Core.uiLang, "Once, in the background; a notice shows when there is a new version")
                             checked: dlg.g.update_check !== false
                             onToggled: function(on) { dlg.set("general.update_check", on) }
                         }

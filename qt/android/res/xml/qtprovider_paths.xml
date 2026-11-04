@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Folders the FileProvider of AndroidManifest.xml may hand out: the app's own files (where an update's APK is
+     saved, <data>/update) and its cache. -->
+<paths>
+    <files-path name="files" path="."/>
+    <cache-path name="cache" path="."/>
+    <external-files-path name="external_files" path="."/>
+</paths>

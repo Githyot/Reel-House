@@ -73,6 +73,7 @@ pub mod torrent;
 #[cfg(feature = "torrent-embed")]
 pub mod torrent_embed;
 pub mod translate;
+pub mod update_delta;
 pub mod updater;
 pub mod uisounds;
 pub mod util;

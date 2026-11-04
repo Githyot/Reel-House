@@ -93,6 +93,9 @@ public:
     Q_INVOKABLE void refreshSafeArea();
     // The screen does not dim while a video plays.
     Q_INVOKABLE void keepScreenOn(bool on);
+    // Android: hands a downloaded APK (an update of the app, controller_update.rs) to the system installer through
+    // the FileProvider of the manifest. False when it could not be started. Does nothing elsewhere.
+    static bool installApk(const QString &path);
     // The folders of this system: {data, cache, temp, downloads, movies, pictures, documents}.
     Q_INVOKABLE QVariantMap folders() const;
 

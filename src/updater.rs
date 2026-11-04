@@ -6,11 +6,18 @@
 //! - Windows (the portable folder): the zip is unpacked, a PowerShell helper (`windows_script`) waits for the app
 //!   to close, keeps a copy of the old files, copies the new ones over the program folder (never over the data
 //!   folder), puts the old files back if the copy fails, and opens the app again.
-//! - Linux (.deb / .rpm) and macOS (.dmg): the file is opened with the system installer.
-//! - Android and iOS: the release page opens.
+//! - Linux (.rpm / .deb): the changed files of the release's .zip are copied over /opt/reelhouse (pkexec asks for
+//!   the password once); without that zip, or without pkexec, the whole package is installed with `pkexec dnf` /
+//!   `pkexec apt-get`, and as a last resort it is opened with the system installer.
+//! - Android: the APK is put together (update_delta.rs) or downloaded and handed to the system installer.
+//! - macOS and iOS: the release page opens.
 //!
-//! The repository is private for now: the GitHub token of the online backup (Preferences > Backup) is sent when it
-//! is set, and an anonymous request is tried too (it works once the repository is public).
+//! Only what changed is downloaded when the release has a zip of the program (update_delta.rs); otherwise the
+//! whole file. With "Update by itself" (Preferences > General) the startup check also downloads the update and
+//! installs it when the app closes (Windows, Linux) or hands it to the installer right away (Android).
+//!
+//! The repository is public: requests are anonymous. The GitHub token of the online backup is tried only when an
+//! anonymous request is refused (GitHub's hourly limit for anonymous requests).
 //! User data never lives in the program folder (`util::data_dir`: %APPDATA%\Reelhouse, ~/.config/reelhouse, the
 //! app container on phones), so replacing the program keeps everything.
 use crate::http::{Http, Request, Response};
@@ -96,6 +103,18 @@ pub struct Asset {
     pub id: u64,
     pub name: String,
     pub size: u64,
+    /// "sha256:<hex>" when GitHub published one.
+    pub digest: String,
+    /// The public download address (github.com/…/releases/download/…), which does not count against GitHub's
+    /// hourly limit of API requests.
+    pub url: String,
+}
+
+impl Asset {
+    /// The SHA-256 GitHub published for the file, lowercase hex ("" when there is none).
+    pub fn sha256(&self) -> String {
+        self.digest.strip_prefix("sha256:").unwrap_or("").to_lowercase()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -154,6 +173,7 @@ impl Platform {
             Platform::MacOs => Some("ReelHouse-macos.dmg"),
             Platform::Linux(false) => Some("ReelHouse-linux-x86_64.deb"),
             Platform::Linux(true) => Some("ReelHouse-linux-x86_64.rpm"),
+            Platform::Android if cfg!(target_arch = "x86_64") => Some("ReelHouse-android-x86_64.apk"),
             Platform::Android => Some("ReelHouse-android-arm64-v8a.apk"),
             Platform::Ios => Some("ReelHouse-ios-unsigned.ipa"),
             Platform::Other => None,
@@ -161,13 +181,35 @@ impl Platform {
     }
     /// Whether the app downloads the file itself (else the release page opens).
     pub fn downloads(self) -> bool {
-        matches!(self, Platform::Windows | Platform::MacOs | Platform::Linux(_))
+        matches!(self, Platform::Windows | Platform::MacOs | Platform::Linux(_) | Platform::Android)
+    }
+    /// Whether the update can install without the user doing anything but agreeing (the startup update).
+    pub fn installs_alone(self) -> bool {
+        matches!(self, Platform::Windows | Platform::Linux(_) | Platform::Android)
+    }
+    /// The zip of the program folder, from which only the changed files are taken (Windows: the release file itself).
+    pub fn folder_zip(self) -> Option<&'static str> {
+        match self {
+            Platform::Windows => Some("ReelHouse-windows.zip"),
+            Platform::Linux(_) => Some("ReelHouse-linux-x86_64.zip"),
+            _ => None,
+        }
+    }
+    /// The program inside its folder, as a zip path.
+    pub fn exe_rel(self) -> &'static str {
+        match self {
+            Platform::Windows => "reelhouse-qt.exe",
+            _ => "bin/reelhouse-qt",
+        }
     }
 }
 
 impl Release {
     pub fn asset_for(&self, p: Platform) -> Option<&Asset> {
         let name = p.asset_name()?;
+        self.asset_named(name)
+    }
+    pub fn asset_named(&self, name: &str) -> Option<&Asset> {
         self.assets.iter().find(|a| a.name.eq_ignore_ascii_case(name))
     }
 }
@@ -185,7 +227,7 @@ fn release_of(j: &Json) -> Option<Release> {
         .get("assets")
         .items()
         .iter()
-        .map(|a| Asset { id: a.get("id").as_u64().unwrap_or(0), name: a.get("name").str(), size: a.get("size").as_u64().unwrap_or(0) })
+        .map(|a| Asset { id: a.get("id").as_u64().unwrap_or(0), name: a.get("name").str(), size: a.get("size").as_u64().unwrap_or(0), digest: a.get("digest").str(), url: a.get("browser_download_url").str() })
         .filter(|a| a.id > 0)
         .collect();
     Some(Release {
@@ -233,8 +275,7 @@ impl Found {
     }
 }
 
-pub const PRIVATE: &str = "The releases could not be read: the repository is private. Connect a GitHub token in Preferences > Backup > Online copy (GitHub) that can read Githyot/Reel-House (fine-grained: \"Contents: read\" on that repository, or a classic token with \"repo\").";
-pub const PRIVATE_TOKEN: &str = "The GitHub token of the online backup cannot read Githyot/Reel-House. Give it \"Contents: read\" on that repository (or use a classic token with \"repo\").";
+pub const NOT_FOUND: &str = "GitHub did not find the releases of Githyot/Reel-House. Try again later.";
 
 fn failure(r: &Response) -> String {
     let msg = Json::parse(&r.text()).map(|j| j.get("message").str()).unwrap_or_default();
@@ -245,31 +286,68 @@ fn failure(r: &Response) -> String {
     }
 }
 
-/// Reads the releases of the repository: with the token when one is set, then anonymously when that fails.
+/// Reads the releases of the repository: anonymously (it is public), then with the token of the online backup
+/// when GitHub refused the anonymous request (its hourly limit).
 pub fn check(http: &dyn Http, token: &str) -> Result<Found, String> {
     let url = format!("{}/repos/{}/releases?per_page=30", API, REPO);
-    let token = token.trim();
-    let mut token_error = None;
-    if !token.is_empty() {
-        let r = http.send(&api_req(&url, token))?;
-        if r.ok() {
-            let j = r.json().map_err(|e| format!("GitHub did not return valid JSON ({})", e))?;
-            return Ok(Found { latest: newest(&j), with_token: true });
-        }
-        token_error = Some(r);
-    }
     let r = http.send(&api_req(&url, ""))?;
     if r.ok() {
         let j = r.json().map_err(|e| format!("GitHub did not return valid JSON ({})", e))?;
         return Ok(Found { latest: newest(&j), with_token: false });
     }
-    Err(match (token_error, r.status) {
-        (Some(t), 404) if t.status == 401 => "GitHub did not accept the token of the online backup (wrong, expired or revoked), and the repository is private. Connect a new token in Preferences > Backup.".into(),
-        (Some(t), 404) if t.status == 404 || t.status == 403 => PRIVATE_TOKEN.into(),
-        (Some(t), _) if t.status != 401 && t.status != 404 => failure(&t),
-        (None, 404) => PRIVATE.into(),
-        _ => failure(&r),
-    })
+    let token = token.trim();
+    if !token.is_empty() && matches!(r.status, 403 | 429) {
+        let t = http.send(&api_req(&url, token))?;
+        if t.ok() {
+            let j = t.json().map_err(|e| format!("GitHub did not return valid JSON ({})", e))?;
+            return Ok(Found { latest: newest(&j), with_token: true });
+        }
+    }
+    Err(if r.status == 404 { NOT_FOUND.into() } else { failure(&r) })
+}
+
+/// A request for a release file: its public address when known (anonymous), else the API with octet-stream.
+fn file_req(asset: &Asset, token: &str) -> Request {
+    if !asset.url.is_empty() && asset.url.starts_with("https://github.com/") {
+        return Request::get(&asset.url).header("User-Agent", "Reelhouse").header("Accept", "application/octet-stream");
+    }
+    let url = format!("{}/repos/{}/releases/assets/{}", API, REPO, asset.id);
+    let mut q = api_req(&url, token);
+    q.headers.retain(|(k, _)| k != "Accept");
+    q.header("Accept", "application/octet-stream")
+}
+
+/// Reads `len` bytes of a release file from `from` (one Range request).
+pub fn fetch_range(http: &dyn Http, token: &str, asset: &Asset, from: u64, len: u64) -> Result<Vec<u8>, String> {
+    if len == 0 {
+        return Ok(vec![]);
+    }
+    let q = file_req(asset, token).header("Range", &format!("bytes={}-{}", from, from + len - 1)).timeout(600);
+    let r = http.send(&q)?;
+    if !r.ok() {
+        return Err(failure(&r));
+    }
+    if r.status == 200 {
+        // the server ignored the Range: take the part asked for
+        let a = (from as usize).min(r.body.len());
+        let b = ((from + len) as usize).min(r.body.len());
+        return Ok(r.body[a..b].to_vec());
+    }
+    Ok(r.body)
+}
+
+/// Checks a downloaded file against the SHA-256 GitHub published (nothing to check when there is none).
+pub fn verify(asset: &Asset, file: &Path) -> Result<(), String> {
+    let want = asset.sha256();
+    if want.is_empty() {
+        return Ok(());
+    }
+    let got = crate::update_delta::sha256_file(file)?;
+    if got != want {
+        let _ = std::fs::remove_file(file);
+        return Err(format!("The downloaded {} is damaged (SHA-256 does not match). Try again.", asset.name));
+    }
+    Ok(())
 }
 
 /// Downloads a file of a release into `dest`, in pieces so no answer passes the size limit of the HTTP layer.
@@ -283,16 +361,13 @@ fn download_in(http: &dyn Http, token: &str, asset: &Asset, dest: &Path, progres
     if let Some(d) = dest.parent() {
         std::fs::create_dir_all(d).map_err(|e| format!("Could not make {}: {}", d.display(), e))?;
     }
-    let url = format!("{}/repos/{}/releases/assets/{}", API, REPO, asset.id);
     let mut out = std::fs::File::create(dest).map_err(|e| format!("Could not write {}: {}", dest.display(), e))?;
     let mut from = 0u64;
     loop {
         if !go_on() {
             return Err("The download was cancelled.".into());
         }
-        let mut q = api_req(&url, token);
-        q.headers.retain(|(k, _)| k != "Accept");
-        q = q.header("Accept", "application/octet-stream").header("Range", &format!("bytes={}-{}", from, from + piece - 1)).timeout(600);
+        let q = file_req(asset, token).header("Range", &format!("bytes={}-{}", from, from + piece - 1)).timeout(600);
         let r = http.send(&q)?;
         if !r.ok() {
             if r.status == 416 && from > 0 {
@@ -335,7 +410,8 @@ fn ps_quote(p: &Path) -> String {
 /// folder), copies `new_dir` over `install` (again leaving out `keep`), and on a failed copy puts the old files back.
 /// Then it opens `exe` again and removes the work folder. What it does goes to `log`.
 #[allow(clippy::too_many_arguments)]
-pub fn windows_script(pid: u32, new_dir: &Path, install: &Path, backup: &Path, exe: &Path, keep: &[PathBuf], work: &Path, log: &Path) -> String {
+pub fn windows_script(pid: u32, new_dir: &Path, install: &Path, backup: &Path, exe: &Path, keep: &[PathBuf], work: &Path, log: &Path, relaunch: bool) -> String {
+    let start = if relaunch { format!("Start-Process -FilePath {} -WorkingDirectory {}", ps_quote(exe), ps_quote(install)) } else { "# the app closed by itself: it is not opened again".to_string() };
     let xd = if keep.is_empty() { String::new() } else { format!(" /XD {}", keep.iter().map(|k| ps_quote(k)).collect::<Vec<_>>().join(" ")) };
     let rc = "/E /R:5 /W:2 /NFL /NDL /NJH /NJS /NP";
     format!(
@@ -350,7 +426,7 @@ if (Test-Path -LiteralPath {backup}) {{ Remove-Item -LiteralPath {backup} -Recur
 robocopy {install} {backup} {rc}{xd} | Out-Null
 if ($LASTEXITCODE -ge 8) {{
   Log "update: could not keep a copy of the old files (robocopy $LASTEXITCODE); nothing was changed"
-  Start-Process -FilePath {exe} -WorkingDirectory {install}
+  {start}
   exit 1
 }}
 robocopy {new} {install} {rc}{xd} | Out-Null
@@ -358,11 +434,11 @@ if ($LASTEXITCODE -ge 8) {{
   Log "update: copying the new files failed (robocopy $LASTEXITCODE); putting the old ones back"
   robocopy {backup} {install} {rc}{xd} | Out-Null
   Log "update: old files restored (robocopy $LASTEXITCODE). The copy stays in {backup_plain}"
-  Start-Process -FilePath {exe} -WorkingDirectory {install}
+  {start}
   exit 1
 }}
 Log 'update: installed'
-Start-Process -FilePath {exe} -WorkingDirectory {install}
+{start}
 Start-Sleep -Seconds 2
 Remove-Item -LiteralPath {work} -Recurse -Force -ErrorAction SilentlyContinue
 "#,
@@ -372,7 +448,7 @@ Remove-Item -LiteralPath {work} -Recurse -Force -ErrorAction SilentlyContinue
         backup_plain = backup.display().to_string().replace('"', "").replace('$', "`$"),
         install = ps_quote(install),
         new = ps_quote(new_dir),
-        exe = ps_quote(exe),
+        start = start,
         work = ps_quote(work),
         rc = rc,
         xd = xd,
@@ -439,6 +515,85 @@ pub fn run_windows_script(script: &Path) -> Result<(), String> {
             c.spawn().map(|_| ()).map_err(|e| format!("Could not start the update helper: {}", e))
         }
     }
+}
+
+/// The first program of `names` found in the usual folders.
+fn find_prog(names: &[&str]) -> Option<PathBuf> {
+    for n in names {
+        for d in ["/usr/bin", "/bin", "/usr/sbin", "/sbin"] {
+            let p = Path::new(d).join(n);
+            if p.is_file() {
+                return Some(p);
+            }
+        }
+    }
+    None
+}
+
+/// The shell command (run as root through pkexec) that installs an update on Linux: the changed files of a staging
+/// folder copied over the program folder (each file replaced, not rewritten, so the running app keeps its old
+/// copy), or a whole package.
+pub fn linux_root_command(what: &LinuxInstall) -> Option<String> {
+    let q = |p: &Path| format!("'{}'", p.display().to_string().replace('\'', "'\\''"));
+    match what {
+        LinuxInstall::Files { stage, install } => Some(format!("cp -r --remove-destination {}/. {}/ && rm -rf {}", q(stage), q(install), q(stage))),
+        LinuxInstall::Package { file, rpm: true } => {
+            if find_prog(&["dnf5", "dnf"]).is_some() {
+                Some(format!("dnf install -y {}", q(file)))
+            } else if find_prog(&["zypper"]).is_some() {
+                Some(format!("zypper --non-interactive install --allow-unsigned-rpm {}", q(file)))
+            } else {
+                Some(format!("rpm -U --replacepkgs {}", q(file)))
+            }
+        }
+        LinuxInstall::Package { file, rpm: false } => Some(format!("apt-get install -y {}", q(file))),
+    }
+}
+
+/// What a Linux update installs.
+#[derive(Clone, Debug, PartialEq)]
+pub enum LinuxInstall {
+    /// The changed files in `stage`, copied over `install` (/opt/reelhouse).
+    Files { stage: PathBuf, install: PathBuf },
+    /// A whole .rpm / .deb.
+    Package { file: PathBuf, rpm: bool },
+}
+
+/// Runs a Linux update as root through pkexec (the system asks for the password). `wait`: wait for the end (the
+/// button); otherwise it is started in its own session so it outlives the app (when the app closes).
+pub fn linux_install(what: &LinuxInstall, wait: bool) -> Result<(), String> {
+    let pkexec = find_prog(&["pkexec"]).ok_or("pkexec is not installed: install the update by hand.")?;
+    let cmd = linux_root_command(what).ok_or("Nothing to install.")?;
+    if wait {
+        let st = std::process::Command::new(&pkexec).args(["sh", "-c", &cmd]).status().map_err(|e| format!("Could not run pkexec: {}", e))?;
+        return match st.code() {
+            Some(0) => Ok(()),
+            Some(126) | Some(127) => Err("The password was not given: nothing was installed.".into()),
+            _ => Err(format!("The install ended with {}.", st)),
+        };
+    }
+    // `sh` stays as pkexec's parent (pkexec asks about its parent process) after the app is gone
+    let outer = format!("{} sh -c '{}'", pkexec.display(), cmd.replace('\'', "'\\''"));
+    let mut c = std::process::Command::new(find_prog(&["setsid"]).unwrap_or_else(|| PathBuf::from("sh")));
+    if c.get_program().to_string_lossy().ends_with("setsid") {
+        c.args(["sh", "-c", &outer]);
+    } else {
+        c.args(["-c", &outer]);
+    }
+    c.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+    c.spawn().map(|_| ()).map_err(|e| format!("Could not start pkexec: {}", e))
+}
+
+/// The program folder of the installed Linux package (/opt/reelhouse), when the app runs from it.
+pub fn linux_install_dir() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let exe = std::fs::canonicalize(&exe).unwrap_or(exe);
+    let bin = exe.parent()?;
+    if bin.file_name()? != "bin" {
+        return None;
+    }
+    let root = bin.parent()?.to_path_buf();
+    root.starts_with("/opt").then_some(root)
 }
 
 /// Opens a downloaded package with the system (xdg-open on Linux, open on macOS).
@@ -512,50 +667,47 @@ mod tests {
         assert_eq!(r.asset_for(Platform::Linux(false)).unwrap().id, 12);
         assert_eq!(r.asset_for(Platform::Linux(true)).unwrap().id, 13);
         assert_eq!(r.asset_for(Platform::MacOs).unwrap().id, 14);
-        assert_eq!(r.asset_for(Platform::Android).unwrap().id, 15);
+        assert_eq!(r.asset_named("ReelHouse-android-arm64-v8a.apk").unwrap().id, 15);
         assert_eq!(r.asset_for(Platform::Ios).unwrap().id, 16);
         assert!(r.asset_for(Platform::Other).is_none());
-        assert!(Platform::Windows.downloads() && !Platform::Android.downloads() && !Platform::Ios.downloads());
+        assert!(Platform::Windows.downloads() && Platform::Android.downloads() && !Platform::Ios.downloads());
+        assert_eq!(Platform::Linux(true).folder_zip(), Some("ReelHouse-linux-x86_64.zip"));
+        assert!(Platform::Android.folder_zip().is_none());
         assert!(newest(&Json::parse("[]").unwrap()).is_none());
     }
 
     #[test]
-    fn check_with_a_token() {
+    fn check_is_anonymous() {
         let f = Fake::new().route("GET https://api.github.com/repos/Githyot/Reel-House/releases", 200, LIST);
         let found = check(&f, " tok ").unwrap();
-        assert!(found.with_token);
+        assert!(!found.with_token);
         assert_eq!(found.update("0.4.2").unwrap().tag, "v0.5.0");
         assert!(found.update("0.5.0").is_none());
         let reqs = f.requests();
         assert_eq!(reqs.len(), 1);
-        assert!(reqs[0].headers.iter().any(|(k, v)| k == "Authorization" && v == "Bearer tok"));
+        assert!(reqs[0].headers.iter().all(|(k, _)| k != "Authorization"));
+        let missing = Fake::new().route("GET https://api.github.com/repos/", 404, r#"{"message":"Not Found"}"#);
+        assert_eq!(check(&missing, "tok").unwrap_err(), NOT_FOUND);
+        assert_eq!(missing.requests().len(), 1);
     }
 
     #[test]
-    fn check_without_a_token_is_anonymous() {
-        let f = Fake::new().route("GET https://api.github.com/repos/Githyot/Reel-House/releases", 200, LIST);
-        let found = check(&f, "").unwrap();
-        assert!(!found.with_token);
-        assert!(f.requests()[0].headers.iter().all(|(k, _)| k != "Authorization"));
-        // the private repository answers 404 to anonymous requests
-        let private = Fake::new().route("GET https://api.github.com/repos/", 404, r#"{"message":"Not Found"}"#);
-        assert_eq!(check(&private, "").unwrap_err(), PRIVATE);
-    }
-
-    #[test]
-    fn a_token_that_fails_falls_back_to_anonymous() {
-        // the token cannot see the repository, but it is public now
-        let f = Fake::new().route("GET https://api.github.com/repos/", 404, "{}").route("GET https://api.github.com/repos/", 200, LIST);
+    fn the_token_helps_only_past_the_limit() {
+        let f = Fake::new().route("GET https://api.github.com/repos/", 403, r#"{"message":"API rate limit exceeded for 1.2.3.4"}"#).route("GET https://api.github.com/repos/", 200, LIST);
         let found = check(&f, "tok").unwrap();
-        assert!(!found.with_token);
-        assert_eq!(f.requests().len(), 2);
-        // both fail: the message says the token lacks access
-        let both = Fake::new().route("GET https://api.github.com/repos/", 404, "{}");
-        assert_eq!(check(&both, "tok").unwrap_err(), PRIVATE_TOKEN);
-        let bad = Fake::new().route("GET https://api.github.com/repos/", 401, r#"{"message":"Bad credentials"}"#).route("GET https://api.github.com/repos/", 404, "{}");
-        assert!(check(&bad, "tok").unwrap_err().contains("did not accept the token"));
+        assert!(found.with_token);
+        assert!(f.requests()[1].headers.iter().any(|(k, v)| k == "Authorization" && v == "Bearer tok"));
         let limited = Fake::new().route("GET https://api.github.com/repos/", 403, r#"{"message":"API rate limit exceeded for 1.2.3.4"}"#);
         assert!(check(&limited, "").unwrap_err().contains("limits"));
+    }
+
+    #[test]
+    fn linux_commands() {
+        let files = LinuxInstall::Files { stage: PathBuf::from("/tmp/it's"), install: PathBuf::from("/opt/reelhouse") };
+        let c = linux_root_command(&files).unwrap();
+        assert!(c.starts_with("cp -r --remove-destination '/tmp/it'\\''s'/. '/opt/reelhouse'/"), "{}", c);
+        let deb = linux_root_command(&LinuxInstall::Package { file: PathBuf::from("/tmp/a.deb"), rpm: false }).unwrap();
+        assert_eq!(deb, "apt-get install -y '/tmp/a.deb'");
     }
 
     #[test]
@@ -565,7 +717,7 @@ mod tests {
         let f = Fake::new()
             .route("GET https://api.github.com/repos/Githyot/Reel-House/releases/assets/11", 206, "abc")
             .route("GET https://api.github.com/repos/Githyot/Reel-House/releases/assets/11", 206, "de");
-        let asset = Asset { id: 11, name: "ReelHouse-windows.zip".into(), size: 5 };
+        let asset = Asset { id: 11, name: "ReelHouse-windows.zip".into(), size: 5, digest: String::new(), url: String::new() };
         let seen = std::sync::Mutex::new(vec![]);
         download_in(&f, "tok", &asset, &dest, &|d, t| seen.lock().unwrap().push((d, t)), &|| true, 3).unwrap();
         assert_eq!(std::fs::read(&dest).unwrap(), b"abcde");
@@ -589,7 +741,10 @@ mod tests {
         let keep = kept_inside(install, &data, work);
         assert_eq!(keep, vec![data.clone()]);
         assert!(kept_inside(install, Path::new("C:\\Users\\x\\AppData\\Roaming\\Reelhouse"), work).is_empty());
-        let s = windows_script(42, &work.join("new"), install, &work.join("old"), &install.join("reelhouse-qt.exe"), &keep, work, Path::new("C:\\it's\\update.log"));
+        let s = windows_script(42, &work.join("new"), install, &work.join("old"), &install.join("reelhouse-qt.exe"), &keep, work, Path::new("C:\\it's\\update.log"), true);
+        assert!(s.contains("Start-Process -FilePath 'C:\\Apps\\ReelHouse"));
+        let quiet = windows_script(42, &work.join("new"), install, &work.join("old"), &install.join("reelhouse-qt.exe"), &keep, work, Path::new("C:\\l.log"), false);
+        assert!(!quiet.contains("Start-Process"));
         assert!(s.contains("Wait-Process -Id 42"));
         assert!(s.contains(&format!("/XD '{}'", data.display())));
         assert!(s.contains("'C:\\it''s\\update.log'"));
