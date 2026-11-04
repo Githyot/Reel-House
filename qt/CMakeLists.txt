@@ -445,6 +445,14 @@ qt_add_resources(reelhouse-qt "mascot" PREFIX "/" FILES
 target_include_directories(reelhouse-qt PRIVATE src)
 target_link_libraries(reelhouse-qt PRIVATE Qt6::Quick Qt6::QuickControls2 Qt6::Gui Qt6::OpenGL Qt6::Network Qt6::Concurrent
     "${RUST_LIB}")
+# The Tor client's compression (liblzma-sys) links the system liblzma when one is installed (Fedora: xz-devel);
+# the Rust static library cannot carry that dependency, so it is named here.
+if(UNIX AND NOT APPLE AND NOT ANDROID)
+    find_library(REELHOUSE_LZMA_LIB lzma)
+    if(REELHOUSE_LZMA_LIB)
+        target_link_libraries(reelhouse-qt PRIVATE "${REELHOUSE_LZMA_LIB}")
+    endif()
+endif()
 if(NOT REELHOUSE_MOBILE AND TARGET Qt6::Multimedia)
     target_link_libraries(reelhouse-qt PRIVATE Qt6::Multimedia)
     # the microphone with the learner's turns (QML type VoiceInput)
