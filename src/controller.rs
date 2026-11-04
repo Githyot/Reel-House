@@ -209,6 +209,8 @@ pub enum Event {
     Profiles,
     /// The window should open this address in the browser.
     OpenUrl(String),
+    /// Android: hand this downloaded APK to the system installer (an update of the app).
+    InstallApk(String),
     /// A line for the log of the window (reelhouse-qt.log), such as the `[live]` lines of Gemini Live.
     Log(String),
     /// Bring the window to the front.
@@ -3639,6 +3641,8 @@ impl Core {
         self.whisper.stop();
         // a call of Gemini Live hangs up
         self.kaiwa_live_shutdown();
+        // a downloaded update is installed now that the app closes (controller_update.rs)
+        self.update_on_close();
         // the last seconds of study time
         self.time_flush();
         // where the readers are (written only every few pages while reading)

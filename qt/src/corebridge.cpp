@@ -1,4 +1,5 @@
 #include "corebridge.h"
+#include "platform.h"
 #include <QTimer>
 #include "videoitem.h"
 #include "bridge.h"
@@ -498,6 +499,10 @@ void CoreBridge::tick() {
         else if (n == "toast") emit toast(e.value("text").toString());
         else if (n == "banner") { QVariantMap b = e; b.remove("e"); emit banner(b); }
         else if (n == "open_url") QDesktopServices::openUrl(QUrl(e.value("url").toString()));
+        // an update of the app on Android (controller_update.rs): the system installer asks the user
+        else if (n == "install_apk") {
+            if (!Platform::installApk(e.value("path").toString())) emit toast(QStringLiteral("The system installer could not be opened."));
+        }
         // the core's lines for this log (the "[live]" lines of Gemini Live)
         else if (n == "log") qInfo().noquote() << e.value("text").toString();
     }

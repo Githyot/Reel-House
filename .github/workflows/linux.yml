@@ -192,6 +192,17 @@ jobs:
           mkdir -p dist
           "$NFPM" package -f packaging/linux/nfpm.yaml -p deb -t dist/ReelHouse-linux-x86_64.deb
           "$NFPM" package -f packaging/linux/nfpm.yaml -p rpm -t dist/ReelHouse-linux-x86_64.rpm
+          # the program folder (/opt/reelhouse) as a zip: an installed app downloads only the files that changed from it
+          # (src/update_delta.rs). Python's zipfile keeps the Unix permissions and follows symlinks.
+          python3 - <<'PY'
+          import os, zipfile
+          root = "AppDir/usr"
+          with zipfile.ZipFile("dist/ReelHouse-linux-x86_64.zip", "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+              for d, _, files in sorted(os.walk(root)):
+                  for f in sorted(files):
+                      p = os.path.join(d, f)
+                      z.write(p, os.path.relpath(p, root))
+          PY
           ls -la dist
           dpkg-deb --info dist/ReelHouse-linux-x86_64.deb
           dpkg-deb --contents dist/ReelHouse-linux-x86_64.deb | grep -E " ./usr/|reelhouse-qt$|qt.conf$" | cut -c1-160
@@ -258,6 +269,7 @@ jobs:
           path: |
             dist/ReelHouse-linux-x86_64.deb
             dist/ReelHouse-linux-x86_64.rpm
+            dist/ReelHouse-linux-x86_64.zip
       - name: Release
         if: startsWith(github.ref, 'refs/tags/v') || startsWith(inputs.release, 'v')
         uses: softprops/action-gh-release@v2
@@ -267,6 +279,7 @@ jobs:
           files: |
             dist/ReelHouse-linux-x86_64.deb
             dist/ReelHouse-linux-x86_64.rpm
+            dist/ReelHouse-linux-x86_64.zip
           append_body: true
           body: |
             **Linux (x86_64):** Ubuntu/Debian: baixe `ReelHouse-linux-x86_64.deb` e rode `sudo apt install ./ReelHouse-linux-x86_64.deb`;

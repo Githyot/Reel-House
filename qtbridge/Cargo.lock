@@ -4296,6 +4296,7 @@ dependencies = [
  "regex",
  "rquickjs",
  "ruzstd",
+ "sha2",
  "tokio",
  "tokio-wireguard",
  "tor-rtcompat",

@@ -1595,6 +1595,7 @@ fn event_json(e: Event) -> Option<Json> {
         Event::Restored => plain("restored"),
         Event::Profiles => plain("profiles"),
         Event::OpenUrl(u) => Some(Json::obj(vec![("e", s("open_url")), ("url", Json::Str(u))])),
+        Event::InstallApk(p) => Some(Json::obj(vec![("e", s("install_apk")), ("path", Json::Str(p))])),
         // a line for reelhouse-qt.log (the `[live]` lines of Gemini Live)
         Event::Log(text) => Some(Json::obj(vec![("e", s("log")), ("text", Json::Str(text))])),
         Event::LensFrame(token, r, ms) => {

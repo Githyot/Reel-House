@@ -122,6 +122,39 @@ void Platform::keepScreenOn(bool on) {
 #endif
 }
 
+bool Platform::installApk(const QString &path) {
+#if defined(Q_OS_ANDROID)
+    QJniObject ctx = QNativeInterface::QAndroidApplication::context();
+    if (!ctx.isValid()) return false;
+    QJniEnvironment env;
+    QJniObject file("java/io/File", "(Ljava/lang/String;)V", QJniObject::fromString(path).object<jstring>());
+    QJniObject pkg = ctx.callObjectMethod("getPackageName", "()Ljava/lang/String;");
+    QJniObject authority = QJniObject::fromString(pkg.toString() + QStringLiteral(".qtprovider"));
+    // content:// address of the file (a file:// one is refused from Android 7 on)
+    QJniObject uri = QJniObject::callStaticObjectMethod("androidx/core/content/FileProvider", "getUriForFile",
+        "(Landroid/content/Context;Ljava/lang/String;Ljava/io/File;)Landroid/net/Uri;", ctx.object(), authority.object<jstring>(), file.object());
+    if (env.checkAndClearExceptions() || !uri.isValid()) {
+        qWarning() << "update: no FileProvider address for" << path;
+        return false;
+    }
+    QJniObject action = QJniObject::fromString(QStringLiteral("android.intent.action.VIEW"));
+    QJniObject intent("android/content/Intent", "(Ljava/lang/String;)V", action.object<jstring>());
+    QJniObject mime = QJniObject::fromString(QStringLiteral("application/vnd.android.package-archive"));
+    intent.callObjectMethod("setDataAndType", "(Landroid/net/Uri;Ljava/lang/String;)Landroid/content/Intent;", uri.object(), mime.object<jstring>());
+    const jint FLAG_GRANT_READ_URI_PERMISSION = 1, FLAG_ACTIVITY_NEW_TASK = 0x10000000;
+    intent.callObjectMethod("addFlags", "(I)Landroid/content/Intent;", FLAG_GRANT_READ_URI_PERMISSION | FLAG_ACTIVITY_NEW_TASK);
+    ctx.callMethod<void>("startActivity", "(Landroid/content/Intent;)V", intent.object());
+    if (env.checkAndClearExceptions()) {
+        qWarning() << "update: the system installer did not open for" << path;
+        return false;
+    }
+    return true;
+#else
+    Q_UNUSED(path);
+    return false;
+#endif
+}
+
 QVariantMap Platform::folders() const {
     auto loc = [](QStandardPaths::StandardLocation l) { return QStandardPaths::writableLocation(l); };
     return {{"data", loc(QStandardPaths::AppDataLocation)},     {"cache", loc(QStandardPaths::CacheLocation)},

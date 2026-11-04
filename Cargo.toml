@@ -28,7 +28,7 @@ torrent-embed = ["dep:librqbit", "dep:librqbit-dualstack-sockets", "dep:tokio", 
 # QuickJS bindings made on the build machine (libclang needed) for targets rquickjs ships none for, such as Android.
 js-bindgen = ["js", "rquickjs?/bindgen"]
 # mpv bridge, networking and the app logic
-app = ["dep:ureq", "dep:libloading", "dep:ruzstd", "dep:tungstenite", "dep:flate2"]
+app = ["dep:ureq", "dep:libloading", "dep:ruzstd", "dep:tungstenite", "dep:flate2", "dep:sha2"]
 # Pages and covers kept on disk as WebP: JPEG / PNG decoded in Rust, encoded lossy by libwebp.
 webp = ["dep:png", "dep:jpeg-decoder", "dep:libwebp"]
 # The JavaScript engine (QuickJS) that runs the Text mode plugins. Needs a C compiler.
@@ -42,6 +42,8 @@ regex = "1"
 ureq = { version = "2.10", optional = true }
 # gzip (already built for ureq and png): the Anime4K shaders archive is unpacked inside the app, Android has no `tar`.
 flate2 = { version = "1", optional = true }
+# SHA-256 of a downloaded update, checked against the digest GitHub publishes for the release file (update_delta.rs).
+sha2 = { version = "0.10", optional = true }
 # Research mode's ad blocker (Brave's adblock-rust, MPL-2.0): EasyList / EasyPrivacy / uBlock filters matching.
 # Without "single-thread" so the engine can be read from Chromium's network thread.
 adblock = { version = "0.13", optional = true, default-features = false, features = ["embedded-domain-resolver", "full-regex-handling"] }
