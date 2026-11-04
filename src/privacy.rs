@@ -436,7 +436,10 @@ fn ensure_gateway() -> Result<(), String> {
 }
 
 async fn connect(cfg: Cfg, epoch: u64) {
-    let up = match make_upstream(&cfg, epoch).await {
+    // a tunnel that never answers must not leave the switch "connecting" forever (Tor has its own 3 minute limit)
+    let limit = Duration::from_secs(if cfg.mode == "tor" { 200 } else { 45 });
+    let made = tokio::time::timeout(limit, make_upstream(&cfg, epoch)).await.unwrap_or_else(|_| Err(format!("the tunnel did not answer in {} seconds", limit.as_secs())));
+    let up = match made {
         Ok(u) => Arc::new(u),
         Err(e) => {
             set_phase(epoch, Phase::Error, &e);
@@ -515,6 +518,10 @@ pub fn set_exit_ip(ip: Result<String, String>) {
 /// For the window: {mode, phase, message, exit_ip, progress, proxy_port, proxy_url, wg_name, wg_has, torrent_over_tor,
 /// tor, system_up}. The WireGuard file and the proxy password are not sent.
 pub fn state_json() -> Json {
+    // before the lock: qt_port() reads the mode, which takes the same lock (a std Mutex is not reentrant; holding
+    // it here froze the window as soon as protection was on, e.g. right after "Use WARP")
+    let port = qt_port();
+    let system_up = mode() == "system" && system_tunnel_up();
     let s = lock();
     let shown_proxy = Proxy::parse(&s.cfg.proxy_url).map(|p| p.shown()).unwrap_or_else(|_| s.cfg.proxy_url.clone());
     let wg_summary = WgFile::parse(&s.cfg.wg_conf).map(|w| w.summary()).unwrap_or_default();
@@ -525,14 +532,14 @@ pub fn state_json() -> Json {
         ("exit_ip", s.exit_ip.clone().into()),
         ("check_error", s.check_error.clone().into()),
         ("progress", (s.progress as i64).into()),
-        ("proxy_port", (qt_port() as i64).into()),
+        ("proxy_port", (port as i64).into()),
         ("proxy_url", shown_proxy.into()),
         ("wg_name", s.cfg.wg_name.clone().into()),
         ("wg_has", (!s.cfg.wg_conf.trim().is_empty()).into()),
         ("wg_summary", wg_summary.into()),
         ("torrent_over_tor", s.cfg.torrent_over_tor.into()),
         ("tor", true.into()),
-        ("system_up", (s.cfg.mode == "system" && system_tunnel_up()).into()),
+        ("system_up", (s.cfg.mode == "system" && system_up).into()),
     ])
 }
 
@@ -1641,6 +1648,12 @@ mod tests {
         s.write_all(b"pong").unwrap();
         s.read_exact(&mut b).unwrap();
         assert_eq!(&b, b"pong");
+        // the window's state while protection is on (this used to take the state lock twice and hang the window)
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(state_json().get("proxy_port").as_i64().unwrap_or(-1));
+        });
+        assert_eq!(rx.recv_timeout(Duration::from_secs(5)).expect("state_json must not hang"), gw as i64);
         // kill switch: protection on, tunnel not ready -> refused
         READY.store(false, Ordering::Relaxed);
         lock().phase = Phase::Error;
