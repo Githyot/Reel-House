@@ -197,6 +197,8 @@ Column {
                     title: pc.tr(modelData.title)
                     PadHints {
                         vertical: true
+                        // a fixed width: sized by its own content, the two-column choice (which reads the width) looped
+                        width: Math.max(200, Math.min(400, mapRow.width * 0.5))
                         kind: pc.pad ? pc.pad.kind : "ps4"
                         hints: mapRow.modelData.hints.map(function(h) { return {button: h.button, text: pc.tr(h.text)} })
                     }
