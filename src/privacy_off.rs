@@ -20,6 +20,10 @@ impl Cfg {
 pub fn init() {}
 
 pub fn started() {}
+
+pub fn direct(_url: &str) -> bool {
+    false
+}
 pub fn apply(_: Cfg) -> Result<(), String> {
     Err("This build has no IP protection.".into())
 }

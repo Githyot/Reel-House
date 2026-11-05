@@ -81,6 +81,10 @@ impl Tunnel {
         } = self;
 
         let (len, source) = socket.try_recv_from(&mut buffers.0).ok()?;
+        // the three reserved header bytes may carry a value (Cloudflare WARP): boringtun wants them zero
+        if len >= 4 {
+            buffers.0[1..4].fill(0);
+        }
         let packet = Tunn::parse_incoming_packet(&buffers.0[..len]).ok()?;
 
         let peer = match packet {
@@ -108,6 +112,7 @@ impl Tunnel {
                 TunnResult::Err(..) => return None,
                 TunnResult::Done => None,
                 TunnResult::WriteToNetwork(mut datagram) => loop {
+                    mark(datagram, peer.config.reserved);
                     socket.send_to(datagram, source).await.ok();
                     match peer.tunnel.decapsulate(None, &[], &mut buffers.0) {
                         TunnResult::WriteToNetwork(d) => datagram = d,
@@ -166,17 +171,11 @@ impl Tunnel {
                     .any(|net| net.contains(&destination))
         })?;
 
-        let endpoint = match peer.config.endpoint? {
-            SocketAddr::V4(addr) => SocketAddr::V6(SocketAddrV6::new(
-                addr.ip().to_ipv6_mapped(),
-                addr.port(),
-                0,
-                0,
-            )),
-            e => e,
-        };
+        let endpoint = mapped(peer.config.endpoint?);
+        let reserved = peer.config.reserved;
         let packet = peer.tunnel.encapsulate(packet, &mut buffers.1);
         if let TunnResult::WriteToNetwork(packet) = packet {
+            mark(packet, reserved);
             socket.send_to(packet, endpoint).await.ok();
         }
 
@@ -188,16 +187,24 @@ impl Tunnel {
             peers,
             buffers,
             socket,
+            rate_limiter,
             ..
         } = self;
 
+        // the shared limiter counts handshakes; boringtun only resets a limiter it made itself (Reelhouse fix:
+        // without this, after 64 handshakes every reply was treated as "under load" and refused)
+        rate_limiter.reset_count();
         for peer in peers.iter_mut() {
             let endpoint = match (peer.active, peer.config.endpoint) {
-                (true, Some(endpoint)) => endpoint,
+                // the socket is IPv6 with IPv4 mapped in: an IPv4 address must be mapped (Reelhouse fix: handshake
+                // retries and keepalives to an IPv4 server never left)
+                (true, Some(endpoint)) => mapped(endpoint),
                 _ => continue,
             };
+            let reserved = peer.config.reserved;
             let packet = peer.tunnel.update_timers(&mut buffers.0);
             if let TunnResult::WriteToNetwork(packet) = packet {
+                mark(packet, reserved);
                 socket.send_to(packet, endpoint).await.ok();
             }
         }
@@ -245,6 +252,21 @@ impl Tunnel {
             }
             None => false,
         }
+    }
+}
+
+/// An IPv4 address as the dual-stack IPv6 socket needs it.
+fn mapped(addr: SocketAddr) -> SocketAddr {
+    match addr {
+        SocketAddr::V4(a) => SocketAddr::V6(SocketAddrV6::new(a.ip().to_ipv6_mapped(), a.port(), 0, 0)),
+        e => e,
+    }
+}
+
+/// The reserved header bytes of an outgoing message.
+fn mark(packet: &mut [u8], reserved: [u8; 3]) {
+    if packet.len() >= 4 && reserved != [0, 0, 0] {
+        packet[1..4].copy_from_slice(&reserved);
     }
 }
 

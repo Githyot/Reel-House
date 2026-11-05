@@ -263,6 +263,12 @@ pub fn gate() -> Result<(), String> {
     })
 }
 
+/// Requests that go straight even while protection is on: only Cloudflare's WARP sign-up, which makes the tunnel
+/// (so it cannot go through it) and only reaches Cloudflare, who sees this address anyway when WARP is in use.
+pub fn direct(url: &str) -> bool {
+    url.starts_with("https://api.cloudflareclient.com/")
+}
+
 /// Torrents may start now (Tor refuses them unless the user allowed it).
 pub fn torrent_allowed() -> Result<(), String> {
     if !active() {
@@ -480,7 +486,11 @@ fn ensure_gateway() -> Result<(), String> {
 
 async fn connect(cfg: Cfg, epoch: u64) {
     // a tunnel that never answers must not leave the switch "connecting" forever (Tor has its own 3 minute limit)
-    let limit = Duration::from_secs(if cfg.mode == "tor" { 200 } else { 45 });
+    let limit = Duration::from_secs(match cfg.mode.as_str() {
+        "tor" => 200,
+        "wireguard" => 90,
+        _ => 45,
+    });
     let made = tokio::time::timeout(limit, make_upstream(&cfg, epoch)).await.unwrap_or_else(|_| Err(format!("the tunnel did not answer in {} seconds", limit.as_secs())));
     let up = match made {
         Ok(u) => Arc::new(u),
@@ -615,9 +625,45 @@ async fn make_upstream(cfg: &Cfg, epoch: u64) -> Result<Upstream, String> {
         "wireguard" => {
             let w = WgFile::parse(&cfg.wg_conf)?;
             let dns = w.dns.clone();
-            let config = w.into_config().await?;
-            let iface = tokio_wireguard::Interface::new(config).map_err(|e| format!("WireGuard could not start ({})", e))?;
-            Ok(Upstream::Wg { iface, dns })
+            // Cloudflare WARP answers on several addresses and ports; some networks block one of them, so each is
+            // tried with a quick question through the tunnel (the official app does the same)
+            let mut tries = vec![w.endpoint.clone()];
+            if w.endpoint.to_lowercase().starts_with("engage.cloudflareclient.com") {
+                for e in WARP_ENDPOINTS {
+                    if !tries.iter().any(|t| t == e) {
+                        tries.push(e.to_string());
+                    }
+                }
+            }
+            let mut last = String::new();
+            for ep in &tries {
+                if EPOCH.load(Ordering::Relaxed) != epoch {
+                    return Err("the choice changed".into());
+                }
+                let mut one = w.clone();
+                one.endpoint = ep.clone();
+                let config = match one.into_config().await {
+                    Ok(c) => c,
+                    Err(e) => {
+                        last = e;
+                        continue;
+                    }
+                };
+                let iface = tokio_wireguard::Interface::new(config).map_err(|e| format!("WireGuard could not start ({})", e))?;
+                if tries.len() == 1 {
+                    return Ok(Upstream::Wg { iface, dns });
+                }
+                match tokio::time::timeout(Duration::from_secs(7), wg_resolve(&iface, &dns, "one.one.one.one")).await {
+                    Ok(Ok(_)) => {
+                        crate::debug::log("privacy", &format!("WARP answers on {}", ep));
+                        return Ok(Upstream::Wg { iface, dns });
+                    }
+                    Ok(Err(e)) => last = format!("{}: {}", ep, e),
+                    Err(_) => last = format!("{}: no answer", ep),
+                }
+                crate::debug::log("privacy", &format!("WARP did not answer on {} ({})", ep, last));
+            }
+            Err(format!("Cloudflare WARP did not answer on any of its addresses; UDP may be blocked on this network ({})", last))
         }
         "tor" => tor_client(epoch).await.map(Upstream::Tor),
         other => Err(format!("unknown protection mode {}", other)),
@@ -887,6 +933,8 @@ struct WgFile {
     endpoint: String,
     allowed: Vec<String>,
     keepalive: Option<u16>,
+    /// "Reserved = 1, 2, 3": the header bytes Cloudflare WARP expects (its client id); zero otherwise
+    reserved: [u8; 3],
 }
 
 impl WgFile {
@@ -931,6 +979,12 @@ impl WgFile {
                 ("peer", "endpoint") => w.endpoint = v.to_string(),
                 ("peer", "allowedips") => w.allowed = v.split(',').map(|a| a.trim().to_string()).filter(|a| !a.is_empty()).collect(),
                 ("peer", "persistentkeepalive") => w.keepalive = v.parse().ok(),
+                ("peer", "reserved") => {
+                    let b: Vec<u8> = v.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+                    if let Ok(r) = <[u8; 3]>::try_from(b.as_slice()) {
+                        w.reserved = r;
+                    }
+                }
                 _ => {}
             }
         }
@@ -980,6 +1034,7 @@ impl WgFile {
                 public_key: PublicKey::from(self.peer_key),
                 persistent_keepalive: Some(self.keepalive.unwrap_or(25)),
                 preshared_key: self.preshared,
+                reserved: self.reserved,
             }],
         })
     }
@@ -1074,6 +1129,9 @@ fn dns_answer(r: &[u8], id: u16, qtype: u16) -> Option<std::net::IpAddr> {
 // Cloudflare WARP (free, no account): only when the user presses its button
 // ---------------------------------------------------------------------------------------------------------------
 
+/// Other doors of the WARP server, tried when the file's one does not answer.
+const WARP_ENDPOINTS: [&str; 5] = ["162.159.192.1:2408", "162.159.193.1:2408", "162.159.192.1:500", "162.159.192.1:1701", "162.159.192.1:4500"];
+
 /// Registers a new WARP device with Cloudflare (the same request the 1.1.1.1 app makes) and returns a wg-quick file
 /// for it. A new key pair is made here; only the public key is sent. Nothing about the user goes with it.
 pub fn warp_register(http: &dyn crate::http::Http) -> Result<String, String> {
@@ -1102,7 +1160,25 @@ pub fn warp_register(http: &dyn crate::http::Http) -> Result<String, String> {
         return Err(format!("Cloudflare answered {} to the WARP registration.", r.status));
     }
     let j = Json::parse(&String::from_utf8_lossy(&r.body)).map_err(|_| "Cloudflare's answer could not be read.".to_string())?;
-    warp_conf(&j, &b64(&secret.to_bytes())).ok_or_else(|| "Cloudflare's answer has no WARP tunnel in it.".to_string())
+    let conf = warp_conf(&j, &b64(&secret.to_bytes())).ok_or_else(|| "Cloudflare's answer has no WARP tunnel in it.".to_string())?;
+    // turn WARP on for the new device, as the official app does (a device left off may not pass traffic); best effort
+    let root = if j.get("id").is_null() { j.get("result") } else { &j };
+    let (id, token) = (root.get("id").str(), root.get("token").str());
+    if !id.is_empty() && !token.is_empty() && root.get("warp_enabled").as_bool() != Some(true) {
+        let req = crate::http::Request {
+            method: "PATCH",
+            url: format!("https://api.cloudflareclient.com/v0a2158/reg/{}", id),
+            headers: vec![
+                ("CF-Client-Version".into(), "a-6.11-2223".into()),
+                ("User-Agent".into(), "okhttp/3.12.1".into()),
+                ("Authorization".into(), format!("Bearer {}", token)),
+            ],
+            body: Some(("application/json".into(), br#"{"warp_enabled":true}"#.to_vec())),
+            timeout_secs: 30,
+        };
+        let _ = http.send(&req);
+    }
+    Ok(conf)
 }
 
 /// The wg-quick file from Cloudflare's registration answer (with or without the "result" wrapper).
@@ -1121,9 +1197,14 @@ fn warp_conf(j: &Json, private_b64: &str) -> Option<String> {
         return None;
     }
     let addr = if v6.is_empty() { format!("{}/32", v4) } else { format!("{}/32, {}/128", v4, v6) };
+    // the client id goes in the three reserved bytes of each message (Cloudflare checks it on some networks)
+    let reserved = b64_decode(&cfg.get("client_id").str())
+        .filter(|b| b.len() == 3)
+        .map(|b| format!("Reserved = {}, {}, {}\n", b[0], b[1], b[2]))
+        .unwrap_or_default();
     Some(format!(
-        "# Cloudflare WARP (free), made by Reelhouse\n[Interface]\nPrivateKey = {}\nAddress = {}\nDNS = 1.1.1.1, 2606:4700:4700::1111\nMTU = 1280\n\n[Peer]\nPublicKey = {}\nAllowedIPs = 0.0.0.0/0, ::/0\nEndpoint = {}\nPersistentKeepalive = 25\n",
-        private_b64, addr, pubkey, endpoint
+        "# Cloudflare WARP (free), made by Reelhouse\n[Interface]\nPrivateKey = {}\nAddress = {}\nDNS = 1.1.1.1, 2606:4700:4700::1111\nMTU = 1280\n\n[Peer]\nPublicKey = {}\nAllowedIPs = 0.0.0.0/0, ::/0\nEndpoint = {}\nPersistentKeepalive = 25\n{}",
+        private_b64, addr, pubkey, endpoint, reserved
     ))
 }
 
@@ -1572,11 +1653,13 @@ mod tests {
 
     #[test]
     fn warp_answer_becomes_a_wireguard_file() {
-        let j = Json::parse(r#"{"result":{"config":{"peers":[{"public_key":"bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=","endpoint":{"host":"engage.cloudflareclient.com:2408"}}],"interface":{"addresses":{"v4":"172.16.0.2","v6":"2606:4700:110:8a36::2"}}}}}"#).unwrap();
+        let j = Json::parse(r#"{"result":{"config":{"peers":[{"public_key":"bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=","endpoint":{"host":"engage.cloudflareclient.com:2408"}}],"interface":{"addresses":{"v4":"172.16.0.2","v6":"2606:4700:110:8a36::2"}},"client_id":"AQID"}}}"#).unwrap();
         let conf = warp_conf(&j, "yAnz5TF+lXXJte14tji3zlMNq+hd2rYUIgJBgB3fBmk=").unwrap();
         let w = WgFile::parse(&conf).unwrap();
         assert_eq!(w.endpoint, "engage.cloudflareclient.com:2408");
         assert_eq!(w.address_with_prefix(), "172.16.0.2/32,2606:4700:110:8a36::2/128");
+        assert_eq!(w.reserved, [1, 2, 3]);
+        assert!(direct("https://api.cloudflareclient.com/v0a2158/reg") && !direct("https://example.com/"));
         assert_eq!(civil(0), (1970, 1, 1, 0, 0, 0));
         assert_eq!(civil(1_793_664_000), (2026, 11, 3, 0, 0, 0));
     }
@@ -1715,3 +1798,4 @@ mod tests {
         assert!(gate().is_ok());
     }
 }
+

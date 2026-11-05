@@ -21,6 +21,10 @@ impl UreqHttp {
         if crate::privacy::active() && crate::connectivity::is_local(url) {
             return self.local.clone();
         }
+        // Cloudflare's WARP sign-up goes straight: it makes the tunnel, so it cannot need it (privacy::direct)
+        if crate::privacy::direct(url) {
+            return self.agent.clone();
+        }
         // IP protection: every request to another computer goes through the gateway (never straight: kill switch)
         if let Some(proxy) = crate::privacy::http_proxy() {
             let mut g = self.guarded.lock().unwrap_or_else(|p| p.into_inner());
@@ -57,6 +61,9 @@ fn gate(url: &str) -> Result<(), String> {
     }
     if !crate::connectivity::online() {
         return Err(crate::connectivity::offline_error(url));
+    }
+    if crate::privacy::direct(url) {
+        return Ok(());
     }
     // IP protection on and its tunnel not working: refused, never sent without it (kill switch)
     crate::privacy::gate()

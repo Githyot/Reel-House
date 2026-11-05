@@ -63,6 +63,9 @@ pub struct Peer {
     pub persistent_keepalive: Option<u16>,
     /// Optional pre-shared key (the PresharedKey line of a wg-quick file). Added for Reelhouse.
     pub preshared_key: Option<[u8; 32]>,
+    /// The three reserved bytes of every WireGuard message header, filled with this value when sending (Cloudflare
+    /// WARP's client id; zero for ordinary servers). Added for Reelhouse.
+    pub reserved: [u8; 3],
 }
 
 /// An IPv4 or IPv6 address, or both, and their associated network mask
