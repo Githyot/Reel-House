@@ -371,13 +371,14 @@ fn worth(delta: u64, full: u64) -> bool {
     full > 0 && delta * 5 < full * 4
 }
 
-/// Only the changed files of a program-folder zip, unpacked into `stage`. None when a delta is not worth it.
-fn folder_delta(job: &Job, zip: &updater::Asset, install: &Path, exe_rel: &str, stage: &Path) -> Result<Option<u64>, String> {
+/// Only the changed files of a program-folder zip, unpacked into `stage`. None when a delta is not worth it, unless
+/// `always` (no other file to fall back on).
+fn folder_delta(job: &Job, zip: &updater::Asset, install: &Path, exe_rel: &str, stage: &Path, always: bool) -> Result<Option<u64>, String> {
     let fetch = job.fetcher(zip);
     let dir = delta::read_directory(&fetch, zip.size)?;
     let plan = delta::plan_folder(&dir, install, exe_rel)?;
     crate::debug::log("update", &format!("delta: {} changed files, {} of {} bytes", plan.changed.len(), plan.bytes, zip.size));
-    if !worth(plan.bytes, zip.size) {
+    if !always && !worth(plan.bytes, zip.size) {
         return Ok(None);
     }
     delta::fetch_folder(&fetch, &dir, &plan, stage, Some(install), job.progress, job.go_on)?;
@@ -401,7 +402,7 @@ fn prepare_windows(job: &Job, data: &Path) -> Result<Prepared, String> {
     let work = updater::work_dir();
     let _ = std::fs::remove_dir_all(&work);
     let stage = work.join("new");
-    let (new_dir, downloaded) = match folder_delta(job, &asset, &install, &exe_name, &stage) {
+    let (new_dir, downloaded) = match folder_delta(job, &asset, &install, &exe_name, &stage, false) {
         Ok(Some(n)) => (stage, n),
         r => {
             if let Err(e) = r {
@@ -440,7 +441,9 @@ fn prepare_linux(job: &Job, rpm: bool) -> Result<Prepared, String> {
     let zip = Platform::Linux(rpm).folder_zip().and_then(|z| job.rel.asset_named(z)).cloned();
     if let (Some(install), Some(zip)) = (updater::linux_install_dir(), zip.as_ref()) {
         let stage = updater::work_dir().join("stage");
-        match folder_delta(job, zip, &install, Platform::Linux(rpm).exe_rel(), &stage) {
+        // releases carry only the zip (HP, 2026-11-05): with no package to fall back on, its changed files are
+        // taken even when that is most of it
+        match folder_delta(job, zip, &install, Platform::Linux(rpm).exe_rel(), &stage, pkg.is_none()) {
             Ok(Some(n)) => return Ok(Prepared { ready: Ready::Linux(LinuxInstall::Files { stage, install }), downloaded: n, full: pkg.as_ref().map(|p| p.size).unwrap_or(zip.size) }),
             Ok(None) => {}
             Err(e) => {
