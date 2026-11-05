@@ -276,15 +276,11 @@ jobs:
         with:
           tag_name: ${{ inputs.release || github.ref_name }}
           target_commitish: ${{ github.sha }}
-          files: |
-            dist/ReelHouse-linux-x86_64.deb
-            dist/ReelHouse-linux-x86_64.rpm
-            dist/ReelHouse-linux-x86_64.zip
+          # only the zip the app updates itself from (HP, 2026-11-05); the .rpm / .deb stay in the run's artifact
+          files: dist/ReelHouse-linux-x86_64.zip
           append_body: true
           body: |
-            **Linux (x86_64):** Ubuntu/Debian: baixe `ReelHouse-linux-x86_64.deb` e rode `sudo apt install ./ReelHouse-linux-x86_64.deb`;
-            Fedora/openSUSE: baixe `ReelHouse-linux-x86_64.rpm` e rode `sudo dnf install ./ReelHouse-linux-x86_64.rpm`. Abra "ReelHouse" no menu
-            ou rode `reelhouse`. O vídeo usa o libmpv do sistema (instalado junto como dependência; no Fedora vem do pacote `mpv-libs`).
+            **Linux (x86_64):** o app instalado atualiza sozinho com `ReelHouse-linux-x86_64.zip` (só os arquivos que mudaram).
 
   # Installs the .rpm on a current Fedora and loads the system's libmpv the way the program does (its bundled
   # libraries first), so a bundled library that clashes with the system's fails here, not on the user's machine.
