@@ -2580,6 +2580,8 @@ pub unsafe extern "C" fn rh_poll(b: *mut Bridge) -> *mut c_char {
             j.set("e", s("privacy"));
             events.push(j);
         }
+        // the window got this far with the saved protection: the next start may connect again (privacy::init)
+        reelhouse::privacy::started();
         Json::obj(vec![("events", Json::Arr(events)), ("playing", Json::Bool(c.session.is_some()))])
     }));
     out(r.unwrap_or_else(|_| Json::obj(vec![("events", Json::Arr(vec![]))])))
