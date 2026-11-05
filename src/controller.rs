@@ -29,6 +29,7 @@ pub use controller_sub::{Forced, SubSource};
 pub use controller_manga::{MangaList, MangaView, Reader};
 pub use controller_marks::MarkScope;
 pub use controller_xray::track_label;
+pub use controller_audio::{audio_menu, AudioRow};
 pub use controller_novels::NovelReader;
 pub use controller_study::StudySession;
 use crate::jsrt;
@@ -557,6 +558,8 @@ pub struct Core {
     pub novel_catalog: Vec<crate::novels::Plugin>,
     pub novel_catalog_status: String,
     novel_catalog_loading: bool,
+    /// What a pasted source pack asked to install, waiting for the lists of its repositories.
+    pack_pending: Option<PackPending>,
     pub novel_list: MangaList,
     pub novel_view: Option<MangaView>,
     pub novel_reader: Option<NovelReader>,
@@ -1671,6 +1674,7 @@ impl Core {
             novel_catalog: vec![],
             novel_catalog_status: String::new(),
             novel_catalog_loading: false,
+            pack_pending: None,
             novel_list: MangaList::new(),
             study: Core::load_study(&pdir),
             study_session: None,
@@ -2388,7 +2392,13 @@ impl Core {
             },
             Msg::AddonInstalled(r) => match r {
                 Ok((entries, name)) => {
-                    self.settings.addons = entries;
+                    // only the new addon is taken from the list sent to the worker: several installs may run at once
+                    // (a pasted source pack), and each worker started from its own copy of the list
+                    if let Some(new) = entries.last().cloned() {
+                        let id = new.manifest.get("id").str();
+                        self.settings.addons.retain(|e| e.url != new.url && e.manifest.get("id").str() != id);
+                        self.settings.addons.push(new);
+                    }
                     self.save_settings();
                     self.events.push(Event::Info(MsgKind::Addon, format!("Installed {}.", name)));
                     self.load_home();
@@ -3548,6 +3558,34 @@ impl Core {
             self.events.push(Event::Info(MsgKind::Addon, "Paste the link of the addon.".to_string()));
             return;
         }
+        if let Some(pack) = addon_kind::split_pack(&text) {
+            crate::debug::log("addons", &format!("pack of {} links", pack.len()));
+            self.events.push(Event::Info(MsgKind::Addon, format!("Adding {} links…", pack.len())));
+            self.pack_pending = addon_kind::pack_install(&text).map(|want| PackPending {
+                want,
+                until: std::time::Instant::now() + std::time::Duration::from_secs(20 * 60),
+                images: pack.iter().any(|(_, k)| *k == Some(Kind::Images)),
+                text: pack.iter().any(|(_, k)| *k == Some(Kind::Text)),
+                queued: Default::default(),
+            });
+            let pending = self.pack_pending.is_some();
+            for (url, k) in pack {
+                self.add_any_addon(&url, k.map(|k| match k {
+                    Kind::Video => "video",
+                    Kind::Images => "images",
+                    Kind::Text => "text",
+                }).unwrap_or(kind));
+            }
+            if pending {
+                // repositories that were already in the list are not read again: their extensions are on hand
+                self.pack_install_exts();
+            }
+            if pending && !self.novel_catalog_loading {
+                // the list of novel plugins may have been on screen already (nothing new to read)
+                self.pack_install_novels();
+            }
+            return;
+        }
         if let Some(k) = Kind::from_id(kind).or_else(|| addon_kind::guess(&text)) {
             self.add_addon_as(&text, k);
             return;
@@ -4034,5 +4072,57 @@ mod imdb_sid_tests {
         assert_eq!(imdb_episode_id("tt30217403:2:4", "tt30217403", "series", Some(2), Some(4)), None);
         assert_eq!(imdb_episode_id("kitsu:1", "", "series", Some(1), Some(1)), None);
         assert_eq!(imdb_episode_id("mal:1", "tt1", "movie", None, None).as_deref(), Some("tt1"));
+    }
+}
+
+/// A pasted source pack that asked to install the sources of some languages (see addon_kind::PackInstall).
+pub(crate) struct PackPending {
+    want: crate::addon_kind::PackInstall,
+    /// The lists of the repositories come in over some minutes; after this, the request is forgotten.
+    until: std::time::Instant,
+    images: bool,
+    text: bool,
+    /// Extensions already sent to install (each list that comes in adds only the new ones).
+    queued: std::collections::HashSet<String>,
+}
+
+impl Core {
+    fn pack_live(&mut self) -> Option<&mut PackPending> {
+        if self.pack_pending.as_ref().is_some_and(|p| std::time::Instant::now() > p.until) {
+            self.pack_pending = None;
+        }
+        self.pack_pending.as_mut()
+    }
+
+    /// Installs the extensions of the pack's languages that the repositories offer and are not installed yet.
+    pub(super) fn pack_install_exts(&mut self) {
+        let exts = self.suwayomi_exts.clone();
+        let Some(p) = self.pack_live().filter(|p| p.images) else { return };
+        let pkgs: Vec<String> = exts
+            .iter()
+            .filter(|e| !e.installed && (p.want.adult || !e.nsfw) && p.want.wants(&e.lang) && !p.queued.contains(&e.pkg))
+            .map(|e| e.pkg.clone())
+            .collect();
+        p.queued.extend(pkgs.iter().cloned());
+        if !pkgs.is_empty() {
+            crate::debug::log("addons", &format!("pack: installing {} extensions", pkgs.len()));
+            self.suwayomi_install_many(pkgs);
+        }
+    }
+
+    /// Installs the novel plugins of the pack's languages (once, when the list of plugins is read).
+    pub(super) fn pack_install_novels(&mut self) {
+        if self.novel_catalog.is_empty() {
+            return;
+        }
+        let catalog = self.novel_catalog.clone();
+        let installed: Vec<String> = self.novel_installed.iter().map(|p| p.id.clone()).collect();
+        let Some(p) = self.pack_live().filter(|p| p.text) else { return };
+        p.text = false;
+        let todo: Vec<_> = catalog.into_iter().filter(|x| !installed.contains(&x.id) && p.want.wants(&x.lang)).collect();
+        crate::debug::log("addons", &format!("pack: installing {} novel plugins", todo.len()));
+        if !todo.is_empty() {
+            self.novel_install_many(todo);
+        }
     }
 }

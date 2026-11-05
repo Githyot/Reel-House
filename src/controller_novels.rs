@@ -113,6 +113,7 @@ impl Core {
             Ok(l) => {
                 self.novel_catalog_status = format!("{} plugins offered.", l.len());
                 self.novel_catalog = l;
+                self.pack_install_novels();
             }
             Err(e) => self.novel_catalog_status = e,
         }
@@ -134,6 +135,22 @@ impl Core {
                 Ok(p.clone())
             });
             send(tx, Msg::NovelInstalled(r));
+        });
+    }
+
+    /// Downloads several plugins one after the other (the languages a source pack asked for).
+    pub fn novel_install_many(&mut self, list: Vec<Plugin>) {
+        self.toast(&format!("Installing {} novel sources…", list.len()));
+        let dir = self.plugins_dir();
+        self.spawn(move |tx, http| {
+            for p in list {
+                let r = novels::fetch_code(&*http, &p).and_then(|code| {
+                    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+                    std::fs::write(dir.join(format!("{}.js", p.id)), code).map_err(|e| e.to_string())?;
+                    Ok(p.clone())
+                });
+                send(tx, Msg::NovelInstalled(r));
+            }
         });
     }
 

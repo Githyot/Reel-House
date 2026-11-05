@@ -1045,7 +1045,7 @@ Item {
         var e = [{header: T("Audio")}]
         var t = page.arr(page.p.audio)
         if (t.length === 0) e.push({text: T("No audio tracks"), key: ""})
-        t.forEach(function(a) { e.push({text: (a.external ? "⤓ " : "") + a.label, checked: a.selected, key: "aid", id: a.id}) })
+        t.forEach(function(a) { e.push({text: (a.external ? "⤓ " : "") + a.label, flag: a.flag || "", checked: a.selected, key: "aid", id: a.id}) })
         e.push({sep: true})
         e.push({text: T("Load an audio track…"), key: "aload", chevron: true})
         // a dub from the episode's other torrents (only the addons the user added are read)
@@ -1060,7 +1060,7 @@ Item {
         const dc = page.arr(page.p.audioSources)
         if (dc.length > 0) {
             e.push({header: T("Audio from other streams")})
-            dc.forEach(function(x) { e.push({text: x.label, key: "dubtry", index: x.index, lang: x.lang}) })
+            dc.forEach(function(x) { e.push({text: x.lang === "" ? T(x.label) : x.label, flag: x.flag || "", key: "dubtry", index: x.index, lang: x.lang}) })
         }
         // a dub loaded from a file: its delay (+ = the sound comes later), the automatic sync, taking it out
         const ext = t.some(function(a) { return a.selected && a.external })

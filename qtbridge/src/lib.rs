@@ -1446,7 +1446,7 @@ fn state_player(b: &Bridge, c: &Core) -> Json {
     o.push(("dubOpening", s(&c.audio_sync.dub_opening)));
     o.push(("dubProgress", s(&c.audio_sync.dub_progress)));
     o.push(("dubAdding", Json::Bool(c.audio_sync.dub_pending.is_some())));
-    o.push(("audioSources", Json::Arr(c.audio_sources().into_iter().map(|(i, l, t)| Json::obj(vec![("index", n(i as f64)), ("lang", s(&l)), ("label", s(&t))])).collect())));
+    o.push(("audioSources", Json::Arr(c.audio_sources().into_iter().map(|x| Json::obj(vec![("index", n(x.index as f64)), ("lang", s(&x.lang)), ("label", s(&x.label)), ("flag", s(&x.flag))])).collect())));
     o.push(("subSources", Json::Arr(c.sub_sources().into_iter().map(|(i, t)| Json::obj(vec![("index", n(i as f64)), ("label", s(&t))])).collect())));
     o.push((
         "skip",
@@ -1519,7 +1519,31 @@ fn state_player(b: &Bridge, c: &Core) -> Json {
         o.push(("muted", Json::Bool(m.get_flag("mute").unwrap_or(false))));
         o.push(("volume", n(m.get_f64("volume").unwrap_or(100.0))));
         o.push(("cache", n(m.get_f64("demuxer-cache-duration").unwrap_or(0.0))));
-        o.push(("audio", tracks_json(&m, "audio")));
+        // only the languages the user knows (+ studied, + the original), named flag + "PT/BR" (HP, 2026-11-04)
+        let langs = c.menu_langs();
+        o.push((
+            "audio",
+            Json::Arr(
+                reelhouse::controller::audio_menu(m.tracks("audio"), &langs)
+                    .into_iter()
+                    .map(|r| {
+                        let t = &r.track;
+                        Json::obj(vec![
+                            ("id", n(t.id as f64)),
+                            ("label", s(&r.label)),
+                            ("flag", s(&r.flag)),
+                            ("title", s(&reelhouse::controller::track_label(&t.title))),
+                            ("lang", s(&t.lang)),
+                            ("langKey", s(&if t.lang.is_empty() { "und".to_string() } else { reelhouse::util::lang_base(&t.lang) })),
+                            ("langName", s(&reelhouse::util::lang_name(&t.lang))),
+                            ("selected", Json::Bool(t.selected)),
+                            ("external", Json::Bool(t.external)),
+                            ("file", s(&t.file)),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ));
         o.push(("subs", tracks_json(&m, "sub")));
     }
     Json::obj(o)

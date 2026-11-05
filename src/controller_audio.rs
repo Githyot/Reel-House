@@ -299,6 +299,28 @@ pub fn restore_ext_audio(mpv: &Mpv, st: &mut ExtAudioStore, data_dir: &Path, sid
 }
 
 impl Core {
+    /// The languages the player lists audio in: the ones the user knows, the one studied and the app's (base codes,
+    /// no repeats).
+    pub fn menu_langs(&self) -> Vec<String> {
+        let g = &self.settings.general;
+        let mut v: Vec<String> = Vec::new();
+        for l in g.known_langs.iter().chain([&g.study_lang, &self.ui_lang()]) {
+            let b = util::lang_base(l);
+            if !b.is_empty() && !v.contains(&b) {
+                v.push(b);
+            }
+        }
+        v
+    }
+
+    /// The Audio menu's tracks (see `audio_menu`).
+    pub fn audio_rows(&self) -> Vec<AudioRow> {
+        match self.mpv.as_ref() {
+            Some(m) => audio_menu(m.tracks("audio"), &self.menu_langs()),
+            None => vec![],
+        }
+    }
+
     fn t_ui(&self, en: &'static str) -> String {
         crate::i18n::translate(&self.ui_lang(), en).unwrap_or(en).to_string()
     }
@@ -742,6 +764,49 @@ pub(super) fn same_file(a: &str, b: &str) -> bool {
     n(a) == n(b)
 }
 
+/// One row of the player's Audio menu: the track, its short name ("PT/BR", HP 2026-11-04) and the country whose flag
+/// is drawn beside it ("" = no flag: the track has no language).
+#[derive(Clone, Debug)]
+pub struct AudioRow {
+    pub track: crate::mpv::Track,
+    pub label: String,
+    pub flag: String,
+}
+
+/// The audio tracks worth showing (HP, 2026-11-04: only the languages the user knows, to cut what is not needed):
+/// the ones in `wanted`, plus the one playing, the first (the original), ones with no language and ones the user
+/// added. `wanted` empty = all. Each is named by flag + "PT/BR"; two of one language add their title or number.
+pub fn audio_menu(tracks: Vec<crate::mpv::Track>, wanted: &[String]) -> Vec<AudioRow> {
+    let first = tracks.first().map(|t| t.id);
+    let mut rows: Vec<AudioRow> = tracks
+        .into_iter()
+        .filter(|t| {
+            let base = util::lang_base(&t.lang);
+            wanted.is_empty() || base.is_empty() || base == "und" || wanted.contains(&base) || t.selected || t.external || Some(t.id) == first
+        })
+        .map(|t| {
+            let base = util::lang_base(&t.lang);
+            if base.is_empty() || base == "und" {
+                let label = super::controller_xray::track_label(&t.label());
+                return AudioRow { track: t, label, flag: String::new() };
+            }
+            let flag = crate::streamlang::track_country(&t.lang, &t.title);
+            AudioRow { label: crate::streamlang::short_code(&t.lang, &flag), track: t, flag }
+        })
+        .collect();
+    // two tracks of one language (a commentary, a second dub): tell them apart
+    let labels: Vec<String> = rows.iter().map(|r| r.label.clone()).collect();
+    for (i, r) in rows.iter_mut().enumerate() {
+        if r.flag.is_empty() || labels.iter().filter(|l| **l == labels[i]).count() < 2 {
+            continue;
+        }
+        let title = super::controller_xray::track_label(r.track.title.trim());
+        let n = labels[..=i].iter().filter(|l| **l == labels[i]).count();
+        r.label = if title.is_empty() { format!("{} #{}", r.label, n) } else { format!("{} · {}", r.label, title) };
+    }
+    rows
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -805,4 +870,17 @@ mod tests {
         assert_eq!(back.folders, st.folders);
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn audio_menu_keeps_known_languages_with_short_names() {
+        let t = |id: i64, lang: &str, title: &str, selected: bool| crate::mpv::Track { id, lang: lang.into(), title: title.into(), selected, external: false, file: String::new() };
+        let tracks = vec![t(1, "jpn", "", false), t(2, "por", "", true), t(3, "eng", "", false), t(4, "ger", "", false), t(5, "fre", "", false), t(6, "por", "Comentários", false)];
+        let rows = audio_menu(tracks.clone(), &["pt".to_string(), "en".to_string()]);
+        let labels: Vec<(&str, &str)> = rows.iter().map(|r| (r.label.as_str(), r.flag.as_str())).collect();
+        // Japanese stays: it is the original (first) track; German and French go
+        assert_eq!(labels, vec![("JA/JP", "jp"), ("PT/BR #1", "br"), ("EN/US", "us"), ("PT/BR · Comentários", "br")]);
+        // nothing known yet: everything
+        assert_eq!(audio_menu(tracks, &[]).len(), 6);
+    }
 }
+

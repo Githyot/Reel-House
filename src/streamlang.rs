@@ -205,6 +205,62 @@ pub fn audio_langs(text: &str) -> AudioLangs {
     out
 }
 
+/// The country whose flag stands for a language when nothing says which ("pt" → Brazil: the app is Brazilian).
+pub fn default_country(lang: &str) -> &'static str {
+    let low = lang.trim().to_lowercase().replace('_', "-");
+    match low.as_str() {
+        "pt-pt" => return "pt",
+        "es-419" | "es-la" | "es-mx" => return "mx",
+        _ => {}
+    }
+    match crate::util::lang_base(&low).as_str() {
+        "pt" => "br",
+        "en" => "us",
+        "ja" => "jp",
+        "es" => "es",
+        "fr" => "fr",
+        "de" => "de",
+        "it" => "it",
+        "ru" => "ru",
+        "ko" => "kr",
+        "zh" => "cn",
+        "hi" => "in",
+        "tr" => "tr",
+        "pl" => "pl",
+        "uk" => "ua",
+        "nl" => "nl",
+        "ar" => "sa",
+        "th" => "th",
+        _ => "",
+    }
+}
+
+/// The country of a track: a region in its tag ("pt-BR", "en-GB"), else the one its title names ("Português (Portugal)"),
+/// else the usual one for the language.
+pub fn track_country(lang: &str, title: &str) -> String {
+    let base = crate::util::lang_base(lang);
+    let tag = lang.trim().to_lowercase().replace('_', "-");
+    if let Some(r) = tag.split('-').nth(1) {
+        if r.len() == 2 && r.chars().all(|c| c.is_ascii_alphabetic()) {
+            return r.to_string();
+        }
+    }
+    // "Português (Portugal)" names two: the less usual country is the one meant
+    let usual = default_country(lang);
+    let named: Vec<String> = audio_langs(title).langs.into_iter().filter(|l| crate::util::lang_base(&l.lang) == base).map(|l| l.flag).collect();
+    if let Some(f) = named.iter().find(|f| f.as_str() != usual).or(named.first()) {
+        return f.clone();
+    }
+    usual.to_string()
+}
+
+/// A language as the player's menus show it beside its flag (HP, 2026-11-04: "Bandeira - PT/BR"): "PT/BR", "EN/US",
+/// "ES/MX"; only the language when no country is known ("EO").
+pub fn short_code(lang: &str, country: &str) -> String {
+    let base = crate::util::lang_base(lang).to_uppercase();
+    if country.is_empty() { base } else { format!("{}/{}", base, country.to_uppercase()) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -256,5 +312,15 @@ mod tests {
     fn plain_names_say_nothing() {
         assert!(flags("1080p · Webrip 66/100 TrueSpec Verified hevc 10-bit").is_empty());
         assert!(flags("Dandadan / Dan Da Dan [S02] (2025) WEB-DL 1080p x264 AAC").is_empty());
+    }
+
+    #[test]
+    fn short_codes_with_their_country() {
+        assert_eq!(short_code("por", &track_country("por", "")), "PT/BR");
+        assert_eq!(short_code("eng", &track_country("eng", "")), "EN/US");
+        assert_eq!(short_code("en-GB", &track_country("en-GB", "")), "EN/GB");
+        assert_eq!(short_code("por", &track_country("por", "Português (Portugal)")), "PT/PT");
+        assert_eq!(short_code("es-419", &default_country("es-419")), "ES/MX");
+        assert_eq!(short_code("eo", ""), "EO");
     }
 }

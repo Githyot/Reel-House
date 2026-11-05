@@ -928,7 +928,7 @@ Popup {
                     spacing: 26
                     PrefGroup {
                         title: dlg.tt("Add an addon")
-                        description: dlg.tt("One box for every mode. Paste the link of a video addon (manifest.json or stremio://), of a repository of manga and comic extensions (index.min.json or its GitHub page) or of a list of novel plugins (.json). The app finds out which mode it is for.")
+                        description: dlg.tt("One box for every mode. Paste the link of a video addon (manifest.json or stremio://), of a repository of manga and comic extensions (index.min.json or its GitHub page) or of a list of novel plugins (.json). The app finds out which mode it is for. You can also paste many links at once, or a source code shared as JSON.")
                         PrefCombo {
                             id: addKind
                             readonly property var ids: ["auto", "video", "images", "text"]
