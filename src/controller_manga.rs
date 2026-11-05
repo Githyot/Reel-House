@@ -377,6 +377,7 @@ impl Core {
                 l.sort_by(|a, b| b.installed.cmp(&a.installed).then(a.name.to_lowercase().cmp(&b.name.to_lowercase())));
                 self.suwayomi_status = format!("{} extensions offered by the repositories.", l.len());
                 self.suwayomi_exts = l;
+                self.pack_install_exts();
             }
             Err(e) => self.suwayomi_status = e,
         }

@@ -121,6 +121,8 @@ pub struct Source {
     pub index: usize,
     pub label: String,
     pub langs: Vec<String>,
+    /// the country of each of `langs` ("br" for "pt-BR"), for its flag
+    pub flags: Vec<String>,
     pub multi: bool,
     pub subs: bool,
 }
@@ -135,14 +137,15 @@ pub fn other_sources(streams: &[Stream], cur: usize) -> Vec<Source> {
         .map(|(i, s)| {
             let text = format!("{} {} {}", s.name, s.desc, s.filename.as_deref().unwrap_or(""));
             let a = crate::streamlang::audio_langs(&text);
-            let mut langs: Vec<String> = Vec::new();
+            let (mut langs, mut flags): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
             for l in a.langs {
                 let b = util::lang_base(&l.lang);
                 if !b.is_empty() && !langs.contains(&b) {
                     langs.push(b);
+                    flags.push(if l.flag.is_empty() { crate::streamlang::default_country(&l.lang).to_string() } else { l.flag });
                 }
             }
-            Source { index: i, label: dub_label(s), langs, multi: a.multi, subs: crate::streamlang::says_subs(&text) }
+            Source { index: i, label: dub_label(s), langs, flags, multi: a.multi, subs: crate::streamlang::says_subs(&text) }
         })
         .collect();
     v.sort_by(|a, b| {
@@ -157,23 +160,36 @@ pub fn other_sources(streams: &[Stream], cur: usize) -> Vec<Source> {
     v
 }
 
-/// The Audio menu's "Audio from other streams": the best stream for each language named, then the ones that only
-/// say they have several (index, language or "", text).
-pub fn audio_choices(sources: &[Source]) -> Vec<(usize, String, String)> {
-    let mut out: Vec<(usize, String, String)> = Vec::new();
-    let mut seen: Vec<String> = Vec::new();
+/// One entry of the Audio menu's "Audio from other streams".
+#[derive(Clone, Debug, PartialEq)]
+pub struct AudioChoice {
+    pub index: usize,
+    /// the language ("" = a stream that only says it has several)
+    pub lang: String,
+    /// "PT/BR" (HP, 2026-11-04: flag + short code, nothing else)
+    pub label: String,
+    /// the country drawn as a flag beside it ("" = none)
+    pub flag: String,
+}
+
+/// The Audio menu's "Audio from other streams": the best stream for each language named, only the languages in
+/// `wanted` (the ones the user knows + studies + the app's; empty = all), then one stream that only says it has
+/// several, when none of those was found.
+pub fn audio_choices(sources: &[Source], wanted: &[String]) -> Vec<AudioChoice> {
+    let mut out: Vec<AudioChoice> = Vec::new();
     for s in sources {
-        for l in &s.langs {
-            if !seen.contains(l) {
-                seen.push(l.clone());
-                out.push((s.index, l.clone(), format!("{} · {}", util::lang_name(l), s.label)));
+        for (l, f) in s.langs.iter().zip(&s.flags) {
+            if (wanted.is_empty() || wanted.contains(l)) && !out.iter().any(|x| &x.lang == l) {
+                out.push(AudioChoice { index: s.index, lang: l.clone(), label: crate::streamlang::short_code(l, f), flag: f.clone() });
             }
         }
     }
-    for s in sources.iter().filter(|s| s.multi && s.langs.len() < 2).take(3) {
-        out.push((s.index, String::new(), s.label.clone()));
+    if out.is_empty() {
+        if let Some(s) = sources.iter().find(|s| s.multi && s.langs.len() < 2) {
+            out.push(AudioChoice { index: s.index, lang: String::new(), label: "Multi".into(), flag: String::new() });
+        }
     }
-    out.truncate(16);
+    out.truncate(8);
     out
 }
 
@@ -226,8 +242,8 @@ impl Core {
     }
 
     /// For the Audio menu: the audio languages other streams of the episode say they have (index, language, text).
-    pub fn audio_sources(&self) -> Vec<(usize, String, String)> {
-        audio_choices(&self.sources_now())
+    pub fn audio_sources(&self) -> Vec<AudioChoice> {
+        audio_choices(&self.sources_now(), &self.menu_langs())
     }
 
     /// For the Subtitles menu: other streams that may bring subtitles in more languages (index, text).
@@ -605,11 +621,19 @@ mod tests {
         let src = other_sources(&list, 0);
         // the direct link first
         assert_eq!(src[0].index, 2);
-        let a = audio_choices(&src);
-        let langs: Vec<&str> = a.iter().map(|x| x.1.as_str()).collect();
+        let a = audio_choices(&src, &[]);
+        let langs: Vec<&str> = a.iter().map(|x| x.lang.as_str()).collect();
         assert!(langs.contains(&"pt") && langs.contains(&"ja") && langs.contains(&"es"), "{:?}", langs);
-        // Portuguese comes from the direct link
-        assert_eq!(a.iter().find(|x| x.1 == "pt").unwrap().0, 2);
+        // Portuguese comes from the direct link, named flag + "PT/BR"
+        let pt = a.iter().find(|x| x.lang == "pt").unwrap();
+        assert_eq!((pt.index, pt.label.as_str(), pt.flag.as_str()), (2, "PT/BR", "br"));
+        assert_eq!(a.iter().find(|x| x.lang == "es").unwrap().label, "ES/MX");
+        // only the languages the user knows
+        let known = audio_choices(&src, &["pt".to_string(), "en".to_string()]);
+        assert_eq!(known.iter().map(|x| x.lang.as_str()).collect::<Vec<_>>(), vec!["pt"]);
+        // none of them: one stream that says it has several
+        let none = audio_choices(&src, &["de".to_string()]);
+        assert!(none.len() <= 1 && none.iter().all(|x| x.lang.is_empty()), "{:?}", none);
         // subtitles: the MultiSub release first
         assert_eq!(sub_choices(&src)[0].0, 4);
         assert!(!sub_choices(&src).iter().any(|x| x.0 == 5));

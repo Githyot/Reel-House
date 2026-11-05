@@ -11,6 +11,8 @@ Rectangle {
     property string text: ""
     property string sub: ""
     property string glyph: ""
+    // a country drawn as a flag before the text ("br", "us"…), for languages in the Audio menu
+    property string flag: ""
     property bool checked: false
     property bool selected: false
     property bool chevron: false
@@ -44,8 +46,15 @@ Rectangle {
         color: row.textColor
         anchors { left: parent.left; leftMargin: row.o.rowPad; verticalCenter: parent.verticalCenter }
     }
+    Flag {
+        id: flagMark
+        visible: row.flag !== "" && !lead.visible
+        code: row.flag
+        h: 14
+        anchors { left: parent.left; leftMargin: row.o.rowPad; verticalCenter: parent.verticalCenter }
+    }
     Column {
-        anchors { left: lead.visible ? lead.right : parent.left; leftMargin: lead.visible ? 10 : row.o.rowPad; right: trail.left; rightMargin: 8; verticalCenter: parent.verticalCenter }
+        anchors { left: lead.visible ? lead.right : (flagMark.visible ? flagMark.right : parent.left); leftMargin: lead.visible || flagMark.visible ? 10 : row.o.rowPad; right: trail.left; rightMargin: 8; verticalCenter: parent.verticalCenter }
         spacing: 1
         Text {
             width: parent.width
