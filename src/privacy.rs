@@ -335,10 +335,53 @@ fn rewrite_magnet(magnet: &str) -> String {
 // Start / change
 // ---------------------------------------------------------------------------------------------------------------
 
-/// At start-up: reads the saved choice and connects.
+/// At start-up: reads the saved choice and connects (in the background: the window never waits for the tunnel).
+/// If the last start with a protection on never got the window going (it froze or crashed), it does not connect
+/// again: the choice stays, nothing goes out (kill switch) and Preferences says why, so the app always opens.
 pub fn init() {
     let cfg = Cfg::load();
+    let mark = start_mark();
+    if cfg.mode != "off" && mark.exists() {
+        let _ = std::fs::remove_file(&mark);
+        crate::debug::log("privacy", &format!("mode {} paused: the last start did not finish", cfg.mode));
+        hold(cfg, "paused because the app did not open last time with it; choose it again or turn it off");
+        return;
+    }
+    if cfg.mode != "off" {
+        let _ = std::fs::write(&mark, b"1");
+    }
     start(cfg, false);
+}
+
+/// The window is up and answering (the bridge calls this after each poll): the start with this protection worked.
+pub fn started() {
+    static DONE: AtomicBool = AtomicBool::new(false);
+    if !DONE.swap(true, Ordering::Relaxed) {
+        let _ = std::fs::remove_file(start_mark());
+    }
+}
+
+fn start_mark() -> std::path::PathBuf {
+    crate::util::data_dir().join("privacy.starting")
+}
+
+/// The saved choice without connecting: protection counts as on (nothing goes out) and shows `why`.
+fn hold(cfg: Cfg, why: &str) {
+    EPOCH.fetch_add(1, Ordering::Relaxed);
+    {
+        let mut s = lock();
+        s.upstream = None;
+        s.exit_ip.clear();
+        s.check_error.clear();
+        s.progress = 0;
+        s.phase = Phase::Error;
+        s.message = why.to_string();
+        s.cfg = cfg;
+    }
+    READY.store(false, Ordering::Relaxed);
+    ACTIVE.store(true, Ordering::Relaxed);
+    set_child_env();
+    changed();
 }
 
 /// The user's new choice: saved and applied (the old tunnel is closed).
@@ -1659,6 +1702,15 @@ mod tests {
         lock().phase = Phase::Error;
         assert!(gate().is_err());
         assert!(connect_tcp("127.0.0.1", echo_port, Duration::from_secs(5)).is_err());
+        // a start that never got the window going: the next one keeps the choice but does not connect
+        apply(Cfg { mode: "proxy".into(), proxy_url: format!("socks5://127.0.0.1:{}", up_port), ..Cfg::default() }).unwrap();
+        std::fs::write(start_mark(), b"1").unwrap();
+        init();
+        assert_eq!(mode(), "proxy");
+        assert!(active() && !ready());
+        assert_eq!(lock().phase, Phase::Error);
+        assert!(gate().is_err());
+        assert!(!start_mark().exists());
         apply(Cfg::default()).unwrap();
         assert!(gate().is_ok());
     }
