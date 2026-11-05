@@ -36,6 +36,9 @@ Item {
     }
     Row {
         id: suffixRow
+        // above the whole-row MouseArea of PrefSwitch / PrefCombo, so a button in the row (the addon trash) gets its own
+        // click instead of toggling the row; plain items here take no mouse, so a click on them still reaches the row
+        z: 1
         anchors { right: parent.right; rightMargin: 12; verticalCenter: parent.verticalCenter }
         spacing: 8
     }
